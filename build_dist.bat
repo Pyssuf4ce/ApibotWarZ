@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 chcp 65001 >nul
 title ApibotWarZ - Build Release Package
 cd /d "%~dp0"
@@ -50,6 +50,7 @@ copy /y UI\bin\Release\net10.0-windows10.0.19041.0\* Launcher_Dist\ >nul
 copy /y ApibotWarZ.exe Launcher_Dist\ >nul
 copy /y server.exe Launcher_Dist\ >nul
 copy /y Start_UI.bat Launcher_Dist\ >nul
+copy /y server.py Launcher_Dist\ >nul
 if exist "vpn_auth.txt" copy /y vpn_auth.txt Launcher_Dist\ >nul
 
 :: Clean unnecessary pdb files from distribution

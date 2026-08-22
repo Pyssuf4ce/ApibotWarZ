@@ -7,52 +7,92 @@ namespace ApibotWarZ.UI.Controls
 {
     public class RoundedButton : Button
     {
-        [System.ComponentModel.Browsable(false)]
-        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
         public Color BaseColor { get; set; } = Color.FromArgb(108, 99, 255);
-
-        [System.ComponentModel.Browsable(false)]
-        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
         public Color HoverColor { get; set; } = Color.FromArgb(130, 121, 255);
-
-        [System.ComponentModel.Browsable(false)]
-        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
         public Color ForeColorNormal { get; set; } = Color.White;
-
-        [System.ComponentModel.Browsable(false)]
-        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
-        public int CornerRadius { get; set; } = 10;
-
-        [System.ComponentModel.Browsable(false)]
-        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
-        public Color SurfaceColor { get; set; } = Color.FromArgb(26, 26, 38);
+        public Color BorderColor { get; set; } = Color.FromArgb(42, 48, 72);
+        public Color DisabledBaseColor { get; set; } = Color.FromArgb(24, 27, 40);
+        public Color DisabledForeColor { get; set; } = Color.FromArgb(90, 96, 120);
+        public Color DisabledBorderColor { get; set; } = Color.FromArgb(34, 38, 56);
+        public int CornerRadius { get; set; } = 8;
+        public bool EnableBorder { get; set; } = true;
 
         private bool _hover;
+        private bool _pressed;
+
+        private float _hoverProgress;     // 0 = idle, 1 = fully hovered
+        private float _pressProgress;     // 0 = idle, 1 = fully pressed
+        private readonly System.Windows.Forms.Timer _animTimer;
+        private const float AnimStep = 0.25f;
 
         public RoundedButton()
         {
             FlatStyle = FlatStyle.Flat;
             FlatAppearance.BorderSize = 0;
-            FlatAppearance.MouseOverBackColor = BaseColor;
-            FlatAppearance.MouseDownBackColor = BaseColor;
+            FlatAppearance.MouseOverBackColor = Color.Transparent;
+            FlatAppearance.MouseDownBackColor = Color.Transparent;
             ForeColor = ForeColorNormal;
             Font = new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold);
             Cursor = Cursors.Hand;
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
                      ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
-                     ControlStyles.SupportsTransparentBackColor, true);
+                     ControlStyles.Selectable, true);
 
-            MouseEnter += (s, e) => { _hover = true; Invalidate(); };
-            MouseLeave += (s, e) => { _hover = false; Invalidate(); };
+            Padding = new Padding(0);
+
+            _animTimer = new System.Windows.Forms.Timer { Interval = 16 };
+            _animTimer.Tick += (s, e) => StepAnimation();
+
+            MouseEnter += (s, e) => { if (Enabled) { _hover = true; EnsureAnimRunning(); } };
+            MouseLeave += (s, e) => { _hover = false; _pressed = false; EnsureAnimRunning(); };
+            MouseDown += (s, e) => { if (Enabled && e.Button == MouseButtons.Left) { _pressed = true; EnsureAnimRunning(); } };
+            MouseUp += (s, e) => { _pressed = false; EnsureAnimRunning(); };
         }
 
-        protected override void OnParentChanged(EventArgs e)
+        protected override bool ShowFocusCues => false;
+
+        private void EnsureAnimRunning()
         {
-            base.OnParentChanged(e);
-            if (Parent != null) SurfaceColor = Parent.BackColor;
+            if (!_animTimer.Enabled) _animTimer.Start();
         }
 
-        protected override void OnPaintBackground(PaintEventArgs pevent) { }
+        private void StepAnimation()
+        {
+            float hoverTarget = (_hover && Enabled) ? 1f : 0f;
+            float pressTarget = (_pressed && Enabled) ? 1f : 0f;
+
+            _hoverProgress = Lerp(_hoverProgress, hoverTarget, AnimStep);
+            _pressProgress = Lerp(_pressProgress, pressTarget, AnimStep);
+
+            Invalidate();
+
+            bool settled = Math.Abs(_hoverProgress - hoverTarget) < 0.01f &&
+                            Math.Abs(_pressProgress - pressTarget) < 0.01f;
+            if (settled)
+            {
+                _hoverProgress = hoverTarget;
+                _pressProgress = pressTarget;
+                _animTimer.Stop();
+                Invalidate();
+            }
+        }
+
+        private static float Lerp(float current, float target, float step)
+            => current + (target - current) * step;
+
+        private static Color LerpColor(Color a, Color b, float t)
+        {
+            t = Math.Max(0f, Math.Min(1f, t));
+            int r = (int)(a.R + (b.R - a.R) * t);
+            int g = (int)(a.G + (b.G - a.G) * t);
+            int bl = (int)(a.B + (b.B - a.B) * t);
+            return Color.FromArgb(255, r, g, bl);
+        }
+
+        protected override void OnPaintBackground(PaintEventArgs pevent)
+        {
+            // Do not paint default background to prevent flickering, we fill clean in OnPaint
+        }
 
         protected override void OnPaint(PaintEventArgs pevent)
         {
@@ -60,25 +100,72 @@ namespace ApibotWarZ.UI.Controls
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
             g.CompositingQuality = CompositingQuality.HighQuality;
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
 
-            using (var surfaceBrush = new SolidBrush(SurfaceColor))
+            // 1. Clear background completely with parent color to avoid any corner bleeding/artifacts
+            Color parentBg = (Parent != null && Parent.BackColor != Color.Transparent) 
+                ? Parent.BackColor 
+                : Color.FromArgb(18, 21, 32);
+
+            using (var bgBrush = new SolidBrush(parentBg))
             {
-                g.FillRectangle(surfaceBrush, ClientRectangle);
+                g.FillRectangle(bgBrush, ClientRectangle);
             }
 
-            Color fill = !Enabled ? Color.FromArgb(60, 60, 72)
-                       : _hover ? HoverColor
-                       : BaseColor;
+            int pressOffset = (int)Math.Round(_pressProgress * 1.5f);
+            var rect = new Rectangle(0, pressOffset, Width - 1, Height - 1 - pressOffset);
 
-            var inset = new Rectangle(0, 0, Width - 1, Height - 1);
-            using var path = RoundedRect(inset, CornerRadius);
-            using var brush = new SolidBrush(fill);
-            g.FillPath(brush, path);
+            if (rect.Width <= 2 || rect.Height <= 2) return;
 
-            Color fore = Enabled ? ForeColorNormal : Color.FromArgb(150, 150, 160);
-            TextRenderer.DrawText(g, Text, Font, ClientRectangle, fore,
-                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            using var path = RoundedRect(rect, CornerRadius);
+
+            if (!Enabled)
+            {
+                // Disabled State: Clean flat dark surface, crisp muted border
+                using (var disabledBrush = new SolidBrush(DisabledBaseColor))
+                {
+                    g.FillPath(disabledBrush, path);
+                }
+
+                if (EnableBorder)
+                {
+                    using var disabledPen = new Pen(DisabledBorderColor, 1f);
+                    g.DrawPath(disabledPen, path);
+                }
+
+                var disabledTextRect = new Rectangle(0, 0, Width, Height);
+                TextRenderer.DrawText(g, Text, Font, disabledTextRect, DisabledForeColor,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.PreserveGraphicsClipping);
+                return;
+            }
+
+            // Enabled State: Smooth transition
+            Color fill = LerpColor(BaseColor, HoverColor, _hoverProgress);
+
+            if (_pressProgress > 0f)
+            {
+                fill = LerpColor(fill, Color.FromArgb(
+                    Math.Max(fill.R - 20, 0),
+                    Math.Max(fill.G - 20, 0),
+                    Math.Max(fill.B - 20, 0)), _pressProgress);
+            }
+
+            using (var brush = new SolidBrush(fill))
+            {
+                g.FillPath(brush, path);
+            }
+
+            // Subtle border
+            if (EnableBorder)
+            {
+                Color curBorder = LerpColor(BorderColor, Color.FromArgb(Math.Min(BorderColor.R + 45, 255), Math.Min(BorderColor.G + 45, 255), Math.Min(BorderColor.B + 45, 255)), _hoverProgress);
+                using var borderPen = new Pen(curBorder, 1f);
+                g.DrawPath(borderPen, path);
+            }
+
+            // Centered crisp text
+            var textRect = new Rectangle(0, pressOffset, Width, Height - pressOffset);
+            TextRenderer.DrawText(g, Text, Font, textRect, ForeColorNormal,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.PreserveGraphicsClipping);
         }
 
         private static GraphicsPath RoundedRect(Rectangle bounds, int radius)
@@ -94,6 +181,16 @@ namespace ApibotWarZ.UI.Controls
             path.AddArc(bounds.X, bounds.Bottom - d, d, d, 90, 90);
             path.CloseFigure();
             return path;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _animTimer?.Stop();
+                _animTimer?.Dispose();
+            }
+            base.Dispose(disposing);
         }
     }
 }
