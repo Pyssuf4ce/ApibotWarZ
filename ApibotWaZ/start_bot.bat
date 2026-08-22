@@ -1,12 +1,11 @@
 @echo off
 chcp 65001 >nul
 
-:: Check for Administrator privileges
 net session >nul 2>&1
 if %errorLevel% == 0 (
     goto :run_bot
 ) else (
-    echo ⚠️ Requesting Administrator privileges for VPN to work...
+    echo Requesting Administrator privileges for VPN to work...
     powershell -Command "Start-Process '%~dpnx0' -Verb RunAs"
     exit /b
 )
@@ -14,17 +13,17 @@ if %errorLevel% == 0 (
 :run_bot
 cd /d "%~dp0"
 echo ==============================================
-echo 🚀 ApibotWarZ - Auto Register Bot
+echo ApibotWarZ - Auto Register Bot
 echo ==============================================
 
-echo 📡 กำลังเปิด API Server สำหรับแก้ Captcha...
+echo Starting API Server...
 start "Captcha Server" cmd /c "server.exe"
 
-echo ⏳ รอระบบเซิร์ฟเวอร์พร้อมทำงาน 3 วินาที...
+echo Waiting 3 seconds for server to start...
 timeout /t 3 /nobreak >nul
 
-echo 🤖 กำลังเปิดระบบบอทหลัก...
+echo Starting Main Bot...
 start "ApibotWarZ" cmd /k "ApibotWarZ.exe"
 
-echo ✅ เปิดโปรแกรมครบแล้ว!
+echo Done!
 timeout /t 5 >nul

@@ -23,15 +23,25 @@ import (
 
 // ค่ากำหนดสำหรับการใช้งาน (ปรับแต่งตรงนี้ตามต้องการ)
 const (
-	TargetURL       = "https://member.thehof.gg/register"
-	MaxConcurrent   = 2 // ⚠️ จำนวนบอทที่รันพร้อมกัน (ถ้าคอมไม่แรง แนะนำ 2-3 ตัวก่อน)
+	TargetURL     = "https://member.thehof.gg/register"
+	MaxConcurrent = 5 // ⚠️ จำนวนบอทที่รันพร้อมกัน 5 ตัว ทำงานแยกกันหมด
 )
 
-var vpnLock sync.Mutex
-var lastVPNChange time.Time
+var (
+	vpnLock         sync.Mutex
+	lastVPNChange   time.Time
+	accountFileLock sync.Mutex
+)
+
+// โครงสร้างข้อมูลสำหรับบัญชีอีเมลชั่วคราว
+type TempMailAccount struct {
+	Email       string
+	Password    string
+	ProviderURL string
+}
 
 func main() {
-	fmt.Printf("🚀 เริ่มรันบอทอัตโนมัติ (ทดสอบระบบรันพร้อมกัน %d ตัว)...\n", MaxConcurrent)
+	fmt.Printf("🚀 เริ่มรันบอทอัตโนมัติ (ระบบรันพร้อมกัน %d ตัว ทำงานแยกกันหมด)...\n", MaxConcurrent)
 
 	var wg sync.WaitGroup
 
@@ -66,19 +76,19 @@ func runBot(botID int) {
 			continue
 		}
 
-		// 2. สร้างอีเมลชั่วคราว
+		// 2. สร้างอีเมลชั่วคราว (ระบบหลาย Provider สำรองอัตโนมัติ)
 		fmt.Printf("[Bot-%d] 📧 กำลังสร้าง Temp Mail...\n", botID)
-		email, password := createTempMail(botID)
-		if email == "" {
+		mailAcc := createTempMail(botID)
+		if mailAcc == nil || mailAcc.Email == "" {
 			fmt.Printf("[Bot-%d] ❌ สร้าง Temp Mail ไม่สำเร็จ (กำลังลองใหม่...)\n", botID)
 			time.Sleep(2 * time.Second)
 			continue
 		}
-		fmt.Printf("[Bot-%d] ✨ ได้อีเมล: %s (รหัสผ่าน: %s)\n", botID, email, password)
+		fmt.Printf("[Bot-%d] ✨ ได้อีเมล: %s (Provider: %s)\n", botID, mailAcc.Email, mailAcc.ProviderURL)
 
 		// 3. ขอ Turnstile Token รอบที่ 1
 		fmt.Printf("[Bot-%d] 🧩 กำลังขอ Token Captcha รอบแรก...\n", botID)
-		turnstileToken := solveTurnstileLocal(TargetURL)
+		turnstileToken := solveTurnstileLocal(TargetURL, botID)
 		if turnstileToken == "" {
 			fmt.Printf("[Bot-%d] ❌ ไม่ได้ Token รอบแรก (กำลังลองใหม่...)\n", botID)
 			continue
@@ -86,7 +96,7 @@ func runBot(botID int) {
 		fmt.Printf("[Bot-%d] ✅ ได้รับ Token รอบแรก!\n", botID)
 
 		// 4. ส่งขอ OTP
-		reference := sendOTPRequest(client, email, turnstileToken, botID)
+		reference := sendOTPRequest(client, mailAcc.Email, turnstileToken, botID)
 		if reference == "IP_BLOCKED" {
 			fmt.Printf("[Bot-%d] 🔄 โดนบล็อค IP ตั้งแต่ตอนขอ OTP! ระบบกำลังทำการสลับ VPN อัตโนมัติ...\n", botID)
 			connectRandomVPN()
@@ -96,9 +106,9 @@ func runBot(botID int) {
 			continue
 		}
 
-		// 5. อ่าน OTP จาก Mail.tm
-		fmt.Printf("[Bot-%d] ⏳ กำลังรอ OTP จากกล่องข้อความ (รอสูงสุด 10 วินาที)...\n", botID)
-		otp := fetchOTP(email, password, botID)
+		// 5. อ่าน OTP จากกล่องข้อความ
+		fmt.Printf("[Bot-%d] ⏳ กำลังรอ OTP จากกล่องข้อความ (รอสูงสุด 15 วินาที)...\n", botID)
+		otp := fetchOTP(mailAcc, botID)
 		if otp == "" {
 			fmt.Printf("[Bot-%d] ❌ รอ OTP นานเกินไป หรือหา OTP ไม่เจอ (กำลังลองใหม่...)\n", botID)
 			continue
@@ -106,7 +116,7 @@ func runBot(botID int) {
 
 		// 6. ยืนยัน OTP
 		fmt.Printf("[Bot-%d] 🚀 กำลังนำ OTP %s ไปยืนยัน (Ref: %s)...\n", botID, otp, reference)
-		verifyToken := submitOTP(client, email, otp, reference, botID)
+		verifyToken := submitOTP(client, mailAcc.Email, otp, reference, botID)
 		if verifyToken == "" {
 			fmt.Printf("[Bot-%d] ❌ ยืนยัน OTP ไม่ผ่าน (กำลังลองใหม่...)\n", botID)
 			continue
@@ -114,14 +124,14 @@ func runBot(botID int) {
 
 		// 7. ขอ Turnstile Token รอบที่ 2 สำหรับหน้าสุดท้าย
 		fmt.Printf("[Bot-%d] 🧩 กำลังขอ Token Captcha รอบสอง...\n", botID)
-		turnstileToken2 := solveTurnstileLocal(TargetURL) 
+		turnstileToken2 := solveTurnstileLocal(TargetURL, botID) 
 		if turnstileToken2 == "" {
 			fmt.Printf("[Bot-%d] ❌ ไม่ได้ Token รอบสอง (กำลังลองใหม่...)\n", botID)
 			continue
 		}
 
 		// 8. สมัครสมาชิกขั้นสุดท้าย
-		status := completeRegistration(client, email, verifyToken, turnstileToken2, botID)
+		status := completeRegistration(client, mailAcc.Email, verifyToken, turnstileToken2, botID)
 		if status == 0 {
 			fmt.Printf("[Bot-%d] 🎉 สมัครสมาชิกสำเร็จเรียบร้อย! กำลังเริ่มสมัครบัญชีถัดไป...\n", botID)
 			continue // กลับไปวนลูปเพื่อสมัครไอดีถัดไป
@@ -137,71 +147,164 @@ func runBot(botID int) {
 	}
 }
 
-// --- ฟังก์ชันสร้าง Temp Mail จาก Mail.tm ---
-func createTempMail(botID int) (string, string) {
-	resp, err := http.Get("https://api.mail.tm/domains")
-	if err != nil {
-		return "", ""
+// Helper to extract domain from response body supporting both JSON array and Hydra format
+func parseDomain(body []byte) string {
+	var arrayRes []struct {
+		Domain string `json:"domain"`
 	}
-	defer resp.Body.Close()
+	if err := json.Unmarshal(body, &arrayRes); err == nil && len(arrayRes) > 0 && arrayRes[0].Domain != "" {
+		return arrayRes[0].Domain
+	}
 
-	var domainRes struct {
+	var hydraRes struct {
 		HydraMember []struct {
 			Domain string `json:"domain"`
 		} `json:"hydra:member"`
 	}
-	json.NewDecoder(resp.Body).Decode(&domainRes)
-	if len(domainRes.HydraMember) == 0 {
-		return "", ""
+	if err := json.Unmarshal(body, &hydraRes); err == nil && len(hydraRes.HydraMember) > 0 && hydraRes.HydraMember[0].Domain != "" {
+		return hydraRes.HydraMember[0].Domain
 	}
 
-	domain := domainRes.HydraMember[0].Domain
-	
-	// สุ่มตัวอักษรให้ดูเป็นอีเมลคนจริงๆ พร้อมเพิ่ม botID เพื่อป้องกันการชนกันเวลาสร้างพร้อมกัน
-	emailPrefix := fmt.Sprintf("david%d%d", botID, time.Now().UnixNano()%100000)
-	email := fmt.Sprintf("%s@%s", emailPrefix, domain)
-	password := "P@ssw0rd123!"
-
-	payload, _ := json.Marshal(map[string]string{"address": email, "password": password})
-	resp2, err := http.Post("https://api.mail.tm/accounts", "application/json", bytes.NewBuffer(payload))
-	if err != nil || resp2.StatusCode != 201 {
-		return "", ""
-	}
-	defer resp2.Body.Close()
-
-	return email, password
+	return ""
 }
 
-// --- ฟังก์ชันแก้ Cloudflare Turnstile ผ่าน CapSolver ---
-func solveTurnstileLocal(pageURL string) string {
-    // 1. สร้าง Payload ส่งแค่ URL ไปให้ Python
-    payloadMap := map[string]string{
-        "url": pageURL,
-    }
-    body, _ := json.Marshal(payloadMap)
+type MailMessageItem struct {
+	Id      string `json:"id"`
+	Subject string `json:"subject"`
+	Intro   string `json:"intro"`
+}
 
-    // 2. ยิง POST ไปที่ Python Server ในเครื่องเราเอง (พอร์ต 5000)
-    resp, err := http.Post("http://127.0.0.1:5000/get-token", "application/json", bytes.NewBuffer(body))
-    if err != nil {
-        fmt.Printf("❌ ไม่สามารถเชื่อมต่อกับ Local API ได้: %v\n(อย่าลืมเปิดรัน python server.py ทิ้งไว้)\n", err)
-        return ""
-    }
-    defer resp.Body.Close()
+// Helper to extract message list from response body supporting both JSON array and Hydra format
+func parseMessages(body []byte) []MailMessageItem {
+	var listRes []MailMessageItem
+	if err := json.Unmarshal(body, &listRes); err == nil && len(listRes) > 0 {
+		return listRes
+	}
 
-    // 3. อ่านผลลัพธ์ (Token) ที่ Python ส่งกลับมา
-    var result struct {
-        Status  string `json:"status"`
-        Token   string `json:"token"`
-        Message string `json:"message"`
-    }
-    json.NewDecoder(resp.Body).Decode(&result)
+	var hydraRes struct {
+		HydraMember []MailMessageItem `json:"hydra:member"`
+	}
+	if err := json.Unmarshal(body, &hydraRes); err == nil && len(hydraRes.HydraMember) > 0 {
+		return hydraRes.HydraMember
+	}
 
-    if result.Status == "success" {
-        return result.Token
-    }
+	return nil
+}
 
-    fmt.Printf("❌ โหลด Token ไม่สำเร็จ: %s\n", result.Message)
-    return ""
+// --- ฟังก์ชันสร้าง Temp Mail รองรับหลาย Provider (mail.tm / mail.gw) และมีระบบ Retry ---
+func createTempMail(botID int) *TempMailAccount {
+	providers := []string{
+		"https://api.mail.tm",
+		"https://api.mail.gw",
+	}
+
+	httpClient := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		for _, providerURL := range providers {
+			// 1. ดึง Domain ที่ใช้งานได้
+			req, err := http.NewRequest("GET", providerURL+"/domains", nil)
+			if err != nil {
+				continue
+			}
+			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+			req.Header.Set("Accept", "application/json")
+
+			resp, err := httpClient.Do(req)
+			if err != nil || resp.StatusCode != 200 {
+				if resp != nil {
+					resp.Body.Close()
+				}
+				continue
+			}
+
+			bodyBytes, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				continue
+			}
+
+			domain := parseDomain(bodyBytes)
+			if domain == "" {
+				continue
+			}
+
+			// สุ่มตัวอักษรและเลขให้ดูเป็นอีเมลคนจริงๆ พร้อมเพิ่ม botID และ nano timestamp ป้องกันการชนกัน
+			randSeed := rand.Intn(10000)
+			emailPrefix := fmt.Sprintf("david%d%d%d", botID, time.Now().UnixNano()%100000, randSeed)
+			email := fmt.Sprintf("%s@%s", emailPrefix, domain)
+			password := "P@ssw0rd123!"
+
+			payload, _ := json.Marshal(map[string]string{"address": email, "password": password})
+			req2, err := http.NewRequest("POST", providerURL+"/accounts", bytes.NewBuffer(payload))
+			if err != nil {
+				continue
+			}
+			req2.Header.Set("Content-Type", "application/json")
+			req2.Header.Set("Accept", "application/json")
+			req2.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+			resp2, err := httpClient.Do(req2)
+			if err != nil {
+				continue
+			}
+			statusCode := resp2.StatusCode
+			resp2.Body.Close()
+
+			if statusCode == 200 || statusCode == 201 {
+				return &TempMailAccount{
+					Email:       email,
+					Password:    password,
+					ProviderURL: providerURL,
+				}
+			}
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	return nil
+}
+
+// --- ฟังก์ชันแก้ Cloudflare Turnstile ผ่าน Local API Server ---
+func solveTurnstileLocal(pageURL string, botID int) string {
+	payloadMap := map[string]string{
+		"url": pageURL,
+	}
+	body, _ := json.Marshal(payloadMap)
+
+	localClient := &http.Client{
+		Timeout: 60 * time.Second, // กำหนด Timeout 60 วินาทีเพื่อรองรับการรันพร้อมกันหลายตัว
+	}
+
+	req, err := http.NewRequest("POST", "http://127.0.0.1:5000/get-token", bytes.NewBuffer(body))
+	if err != nil {
+		fmt.Printf("[Bot-%d] ❌ สร้าง Request แก้ Captcha ไม่สำเร็จ: %v\n", botID, err)
+		return ""
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := localClient.Do(req)
+	if err != nil {
+		fmt.Printf("[Bot-%d] ❌ ไม่สามารถเชื่อมต่อกับ Local API ได้: %v (อย่าลืมเปิด server.py หรือ server.exe)\n", botID, err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Status  string `json:"status"`
+		Token   string `json:"token"`
+		Message string `json:"message"`
+	}
+	json.NewDecoder(resp.Body).Decode(&result)
+
+	if result.Status == "success" {
+		return result.Token
+	}
+
+	fmt.Printf("[Bot-%d] ❌ โหลด Token ไม่สำเร็จ: %s\n", botID, result.Message)
+	return ""
 }
 // --- ฟังก์ชันยิงขอ OTP ไปที่เว็บเป้าหมาย ---
 func sendOTPRequest(client tls_client.HttpClient, email string, turnstileToken string, botID int) string {
@@ -380,6 +483,9 @@ func completeRegistration(client tls_client.HttpClient, email, verifyToken, turn
 
 // --- ฟังก์ชันบันทึกข้อมูลบัญชีลงไฟล์ ---
 func saveAccount(username string) {
+	accountFileLock.Lock()
+	defer accountFileLock.Unlock()
+
 	// สร้างหรือเปิดไฟล์เพื่อเขียนต่อท้าย
 	file, err := os.OpenFile("accounts.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -398,12 +504,29 @@ func saveAccount(username string) {
 }
 
 // --- ฟังก์ชันเช็คกล่องจดหมายเพื่อดึงรหัส OTP ---
-func fetchOTP(email, password string, botID int) string {
-	// ล็อกอินเพื่อเอา Token ของ Mail.tm
-	authPayload, _ := json.Marshal(map[string]string{"address": email, "password": password})
-	resp, err := http.Post("https://api.mail.tm/token", "application/json", bytes.NewBuffer(authPayload))
+func fetchOTP(acc *TempMailAccount, botID int) string {
+	if acc == nil {
+		return ""
+	}
+
+	httpClient := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	// ล็อกอินเพื่อเอา Token ของ Provider
+	authPayload, _ := json.Marshal(map[string]string{"address": acc.Email, "password": acc.Password})
+	reqAuth, err := http.NewRequest("POST", acc.ProviderURL+"/token", bytes.NewBuffer(authPayload))
 	if err != nil {
-		fmt.Printf("❌ ไม่สามารถเชื่อมต่อกับ api.mail.tm/token ได้: %v\n", err)
+		fmt.Printf("[Bot-%d] ❌ สร้างคำขอล็อกอิน Mail ไม่สำเร็จ: %v\n", botID, err)
+		return ""
+	}
+	reqAuth.Header.Set("Content-Type", "application/json")
+	reqAuth.Header.Set("Accept", "application/json")
+	reqAuth.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
+	resp, err := httpClient.Do(reqAuth)
+	if err != nil {
+		fmt.Printf("[Bot-%d] ❌ ไม่สามารถเชื่อมต่อกับ %s/token ได้: %v\n", botID, acc.ProviderURL, err)
 		return ""
 	}
 	defer resp.Body.Close()
@@ -411,7 +534,7 @@ func fetchOTP(email, password string, botID int) string {
 	if resp.StatusCode != 200 {
 		errBody := new(bytes.Buffer)
 		errBody.ReadFrom(resp.Body)
-		fmt.Printf("❌ ล็อกอิน Mail.tm ไม่ผ่าน (Status: %d) - %s\n", resp.StatusCode, errBody.String())
+		fmt.Printf("[Bot-%d] ❌ ล็อกอิน Mail ไม่ผ่าน (Status: %d) - %s\n", botID, resp.StatusCode, errBody.String())
 		return ""
 	}
 
@@ -420,51 +543,56 @@ func fetchOTP(email, password string, botID int) string {
 	}
 	json.NewDecoder(resp.Body).Decode(&authRes)
 	if authRes.Token == "" {
-		fmt.Println("❌ ล็อกอิน Mail.tm สำเร็จ แต่ไม่ได้รับ Token")
+		fmt.Printf("[Bot-%d] ❌ ล็อกอิน Mail สำเร็จ แต่ไม่ได้รับ Token\n", botID)
 		return ""
 	}
 
-	// วนลูปเช็คอีเมลเข้า (รอสูงสุด 10 วินาที)
-	client := &http.Client{}
-	for i := 0; i < 5; i++ {
+	// วนลูปเช็คอีเมลเข้า (รอสูงสุด 15 วินาที)
+	for i := 0; i < 7; i++ {
 		time.Sleep(2 * time.Second)
 
-		req, _ := http.NewRequest("GET", "https://api.mail.tm/messages", nil)
+		req, err := http.NewRequest("GET", acc.ProviderURL+"/messages", nil)
+		if err != nil {
+			continue
+		}
 		req.Header.Set("Authorization", "Bearer "+authRes.Token)
-		resp2, err := client.Do(req)
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+		req.Header.Set("Accept", "application/json")
+
+		resp2, err := httpClient.Do(req)
 		if err != nil {
 			continue
 		}
 
-		var msgRes struct {
-			HydraMember []struct {
-				Id      string `json:"id"`
-				Subject string `json:"subject"`
-				Intro   string `json:"intro"`
-			} `json:"hydra:member"`
-		}
-		json.NewDecoder(resp2.Body).Decode(&msgRes)
+		bodyBytes, err := io.ReadAll(resp2.Body)
 		resp2.Body.Close()
+		if err != nil {
+			continue
+		}
 
-		if len(msgRes.HydraMember) > 0 {
-			intro := msgRes.HydraMember[0].Intro
-			msgId := msgRes.HydraMember[0].Id
-			fmt.Printf("📬 มีอีเมลเข้าแล้ว! หัวข้อ: %s\n", msgRes.HydraMember[0].Subject)
-			fmt.Printf("📝 เนื้อหาเบื้องต้น: %s\n", intro)
-			
+		messages := parseMessages(bodyBytes)
+		if len(messages) > 0 {
+			intro := messages[0].Intro
+			msgId := messages[0].Id
+			fmt.Printf("[Bot-%d] 📬 มีอีเมลเข้าแล้ว! หัวข้อ: %s\n", botID, messages[0].Subject)
+			fmt.Printf("[Bot-%d] 📝 เนื้อหาเบื้องต้น: %s\n", botID, intro)
+
 			// ใช้ Regex ดึงตัวเลข 6 หลักออกมาจากข้อความ (Intro)
 			re := regexp.MustCompile(`\b\d{6}\b`)
 			otp := re.FindString(intro)
-			if otp != "" {
-				fmt.Printf("🎯 สกัดรหัส OTP สำเร็จ: %s\n", otp)
+			if otp != "" && otp != "000000" {
+				fmt.Printf("[Bot-%d] 🎯 สกัดรหัส OTP สำเร็จ: %s\n", botID, otp)
 				return otp
 			}
 
 			// ถ้า Intro ว่างเปล่า หรือหาไม่เจอ ให้ลองดึงเนื้อหาเต็มของอีเมลมาเช็ค
 			fmt.Printf("[Bot-%d] 🔍 ไม่พบ OTP ใน Intro กำลังดึงเนื้อหาเต็มของอีเมลมาตรวจสอบ...\n", botID)
-			reqFull, _ := http.NewRequest("GET", "https://api.mail.tm/messages/"+msgId, nil)
+			reqFull, _ := http.NewRequest("GET", acc.ProviderURL+"/messages/"+msgId, nil)
 			reqFull.Header.Set("Authorization", "Bearer "+authRes.Token)
-			respFull, errFull := client.Do(reqFull)
+			reqFull.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+			reqFull.Header.Set("Accept", "application/json")
+
+			respFull, errFull := httpClient.Do(reqFull)
 			if errFull == nil {
 				var msgFull struct {
 					Text string   `json:"text"`
@@ -472,7 +600,7 @@ func fetchOTP(email, password string, botID int) string {
 				}
 				json.NewDecoder(respFull.Body).Decode(&msgFull)
 				respFull.Body.Close()
-				
+
 				// รวม Text และ Html
 				fullContent := msgFull.Text
 				for _, h := range msgFull.Html {
@@ -486,7 +614,7 @@ func fetchOTP(email, password string, botID int) string {
 				// ลบ HTML Tags และลบช่องว่าง/ขึ้นบรรทัดใหม่ทั้งหมด
 				reTags := regexp.MustCompile(`<[^>]*>`)
 				cleanContent := reTags.ReplaceAllString(fullContent, " ")
-				
+
 				// ลองหาในรูปแบบปกติติดกัน 6 ตัว (ข้าม 000000 ที่อาจเป็นเศษ CSS)
 				reSixDigits := regexp.MustCompile(`\b\d{6}\b`)
 				matches := reSixDigits.FindAllString(cleanContent, -1)
@@ -508,7 +636,6 @@ func fetchOTP(email, password string, botID int) string {
 				}
 
 				// ถ้ายาวๆ แล้วมีเว้นวรรค เราเอาเฉพาะตัวเลขใน cleanContent มาต่อกัน
-				// เช่น 2 9 1 2 9 8 ก็จะจับกลุ่มที่มี \d\s*\d\s*\d\s*\d\s*\d\s*\d
 				reSpaced2 := regexp.MustCompile(`(?:\D|^)(\d\s*){6}(?:\D|$)`)
 				spacedMatch := reSpaced2.FindString(cleanContent)
 				if spacedMatch != "" {
