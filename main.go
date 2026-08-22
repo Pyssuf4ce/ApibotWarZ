@@ -2,11 +2,18 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"math/rand"
+	"os"
+	"os/exec"
 	"regexp"
+	"strings"
 
 	"net/http"
+	"sync"
 	"time"
 
 	fhttp "github.com/bogdanfinn/fhttp"
@@ -16,78 +23,122 @@ import (
 
 // ค่ากำหนดสำหรับการใช้งาน (ปรับแต่งตรงนี้ตามต้องการ)
 const (
-	CapSolverAPIKey = "YOUR_CAPSOLVER_API_KEY" // 🔑 ใส่ API Key ของ CapSolver ที่นี่
-	SiteKey         = "0x4AAAAAAAYP8TXvr_dvr7T" // 🎯 SiteKey ที่เราเพิ่งแกะมา
 	TargetURL       = "https://member.thehof.gg/register"
+	MaxConcurrent   = 2 // ⚠️ จำนวนบอทที่รันพร้อมกัน (ถ้าคอมไม่แรง แนะนำ 2-3 ตัวก่อน)
 )
 
+var vpnLock sync.Mutex
+var lastVPNChange time.Time
+
 func main() {
-	fmt.Println("🚀 เริ่มรันบอทอัตโนมัติ (Go + TLS-Client + CapSolver + Mail.tm)...")
+	fmt.Printf("🚀 เริ่มรันบอทอัตโนมัติ (ทดสอบระบบรันพร้อมกัน %d ตัว)...\n", MaxConcurrent)
 
-	// 1. สร้าง HTTP Client แบบปลอม TLS Fingerprint (Chrome 120)
-	jar := tls_client.NewCookieJar()
-	options := []tls_client.HttpClientOption{
-		tls_client.WithTimeoutSeconds(30),
-		tls_client.WithClientProfile(profiles.Chrome_120),
-		tls_client.WithCookieJar(jar),
-	}
-	client, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), options...)
-	if err != nil {
-		fmt.Printf("❌ สร้าง HTTP Client ไม่สำเร็จ: %v\n", err)
-		return
+	var wg sync.WaitGroup
+
+	for i := 1; i <= MaxConcurrent; i++ {
+		wg.Add(1)
+		go func(botID int) {
+			defer wg.Done()
+			runBot(botID)
+		}(i)
 	}
 
-	// 2. สร้างอีเมลชั่วคราวจาก Mail.tm
-	fmt.Println("📧 กำลังสร้าง Temp Mail...")
-	email, password := createTempMail()
-	if email == "" {
-		fmt.Println("❌ สร้าง Temp Mail ไม่สำเร็จ ยกเลิกการทำงาน")
-		return
-	}
-	fmt.Printf("✨ ได้อีเมลสำหรับสมัคร: %s (รหัสผ่าน: %s)\n", email, password)
+	wg.Wait()
+	fmt.Println("🎉 บอททุกตัวทำงานเสร็จสิ้น!")
+}
 
-	// 3. สั่งแก้ Cloudflare Turnstile ผ่าน CapSolver API เพื่อเอา Token
-	fmt.Println("🧩 กำลังให้ Local API (DrissionPage) แก้ Captcha...")
-	// ไม่ต้องใช้ SiteKey แล้ว ส่งแค่ TargetURL ให้ Browser เข้าไปจัดการได้เลย
-	turnstileToken := solveTurnstileLocal(TargetURL) 
+func runBot(botID int) {
+	fmt.Printf("[Bot-%d] 🚀 เริ่มต้นทำงาน...\n", botID)
 
-	if turnstileToken == "" {
-		fmt.Println("❌ แก้ Captcha ไม่ผ่าน / ไม่ได้ Token ยกเลิกการทำงาน")
-		return
-	}
-	fmt.Println("✅ ได้รับ Turnstile Token เรียบร้อย!")
+	for {
+		fmt.Printf("[Bot-%d] 🔄 (เริ่มรอบใหม่) กำลังเตรียมระบบและสร้าง HTTP Client...\n", botID)
+		// 1. สร้าง HTTP Client แบบปลอม TLS Fingerprint
+		jar := tls_client.NewCookieJar()
+		options := []tls_client.HttpClientOption{
+			tls_client.WithTimeoutSeconds(30),
+			tls_client.WithClientProfile(profiles.Chrome_120),
+			tls_client.WithCookieJar(jar),
+		}
+		client, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), options...)
+		if err != nil {
+			fmt.Printf("[Bot-%d] ❌ สร้าง HTTP Client ไม่สำเร็จ: %v (กำลังลองใหม่...)\n", botID, err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
 
-	// 4. ส่งข้อมูลสมัครสมาชิก / ขอรับ OTP ไปยังเว็บไซต์เป้าหมาย
-	fmt.Println("📤 กำลังส่งคำขอรับ OTP ไปยังเว็บไซต์...")
-	reference := sendOTPRequest(client, email, turnstileToken)
-	if reference == "" {
-		fmt.Println("❌ ส่งคำขอรับ OTP ไม่สำเร็จ")
-		return
-	}
+		// 2. สร้างอีเมลชั่วคราว
+		fmt.Printf("[Bot-%d] 📧 กำลังสร้าง Temp Mail...\n", botID)
+		email, password := createTempMail(botID)
+		if email == "" {
+			fmt.Printf("[Bot-%d] ❌ สร้าง Temp Mail ไม่สำเร็จ (กำลังลองใหม่...)\n", botID)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		fmt.Printf("[Bot-%d] ✨ ได้อีเมล: %s (รหัสผ่าน: %s)\n", botID, email, password)
 
-	// 5. วนลูปเช็คกล่องจดหมายเพื่อรอรับ OTP จาก Mail.tm
-	fmt.Println("⏳ กำลังรอรับ OTP จากกล่องข้อความ...")
-	otp := fetchOTP(email, password)
+		// 3. ขอ Turnstile Token รอบที่ 1
+		fmt.Printf("[Bot-%d] 🧩 กำลังขอ Token Captcha รอบแรก...\n", botID)
+		turnstileToken := solveTurnstileLocal(TargetURL)
+		if turnstileToken == "" {
+			fmt.Printf("[Bot-%d] ❌ ไม่ได้ Token รอบแรก (กำลังลองใหม่...)\n", botID)
+			continue
+		}
+		fmt.Printf("[Bot-%d] ✅ ได้รับ Token รอบแรก!\n", botID)
 
-	if otp != "" {
-		fmt.Printf("🚀 กำลังนำ OTP %s ไปกรอกลงในเว็บไซต์พร้อมกับ Reference: %s...\n", otp, reference)
-		verifyToken := submitOTP(client, email, otp, reference)
-		
-		if verifyToken != "" {
-			fmt.Println("🚀 กำลังเตรียมข้อมูลเพื่อสมัครสมาชิกขั้นตอนสุดท้าย...")
-			// หน้าเว็บขั้นตอนสุดท้ายมี Cloudflare Captcha อีกรอบ ต้องขอ Token ใหม่อีก 1 ครั้ง
-			fmt.Println("🧩 กำลังขอ Token Captcha ใหม่สำหรับการกดยืนยันสมัคร...")
-			turnstileToken2 := solveTurnstileLocal(TargetURL) 
-			
-			if turnstileToken2 != "" {
-				completeRegistration(client, email, verifyToken, turnstileToken2)
-			}
+		// 4. ส่งขอ OTP
+		reference := sendOTPRequest(client, email, turnstileToken, botID)
+		if reference == "IP_BLOCKED" {
+			fmt.Printf("[Bot-%d] 🔄 โดนบล็อค IP ตั้งแต่ตอนขอ OTP! ระบบกำลังทำการสลับ VPN อัตโนมัติ...\n", botID)
+			connectRandomVPN()
+			continue
+		} else if reference == "" {
+			fmt.Printf("[Bot-%d] ❌ ขอ OTP ไม่สำเร็จ (กำลังลองใหม่...)\n", botID)
+			continue
+		}
+
+		// 5. อ่าน OTP จาก Mail.tm
+		fmt.Printf("[Bot-%d] ⏳ กำลังรอ OTP จากกล่องข้อความ (รอสูงสุด 10 วินาที)...\n", botID)
+		otp := fetchOTP(email, password, botID)
+		if otp == "" {
+			fmt.Printf("[Bot-%d] ❌ รอ OTP นานเกินไป หรือหา OTP ไม่เจอ (กำลังลองใหม่...)\n", botID)
+			continue
+		}
+
+		// 6. ยืนยัน OTP
+		fmt.Printf("[Bot-%d] 🚀 กำลังนำ OTP %s ไปยืนยัน (Ref: %s)...\n", botID, otp, reference)
+		verifyToken := submitOTP(client, email, otp, reference, botID)
+		if verifyToken == "" {
+			fmt.Printf("[Bot-%d] ❌ ยืนยัน OTP ไม่ผ่าน (กำลังลองใหม่...)\n", botID)
+			continue
+		}
+
+		// 7. ขอ Turnstile Token รอบที่ 2 สำหรับหน้าสุดท้าย
+		fmt.Printf("[Bot-%d] 🧩 กำลังขอ Token Captcha รอบสอง...\n", botID)
+		turnstileToken2 := solveTurnstileLocal(TargetURL) 
+		if turnstileToken2 == "" {
+			fmt.Printf("[Bot-%d] ❌ ไม่ได้ Token รอบสอง (กำลังลองใหม่...)\n", botID)
+			continue
+		}
+
+		// 8. สมัครสมาชิกขั้นสุดท้าย
+		status := completeRegistration(client, email, verifyToken, turnstileToken2, botID)
+		if status == 0 {
+			fmt.Printf("[Bot-%d] 🎉 สมัครสมาชิกสำเร็จเรียบร้อย! กำลังเริ่มสมัครบัญชีถัดไป...\n", botID)
+			continue // กลับไปวนลูปเพื่อสมัครไอดีถัดไป
+		} else if status == 1 {
+			// ถ้าเจอ 1 แปลว่า IP โดนบล็อค ให้ตัด VPN เก่า แล้วต่อ VPN ใหม่ทันที
+			fmt.Printf("[Bot-%d] 🔄 โดนบล็อค IP! ระบบกำลังทำการสลับ VPN อัตโนมัติ...\n", botID)
+			connectRandomVPN()
+			continue
+		} else {
+			fmt.Printf("[Bot-%d] ❌ สมัครสมาชิกขั้นตอนสุดท้ายไม่สำเร็จ (กำลังเริ่มใหม่ตั้งแต่ต้น...)\n", botID)
+			continue
 		}
 	}
 }
 
 // --- ฟังก์ชันสร้าง Temp Mail จาก Mail.tm ---
-func createTempMail() (string, string) {
+func createTempMail(botID int) (string, string) {
 	resp, err := http.Get("https://api.mail.tm/domains")
 	if err != nil {
 		return "", ""
@@ -106,8 +157,8 @@ func createTempMail() (string, string) {
 
 	domain := domainRes.HydraMember[0].Domain
 	
-	// สุ่มตัวอักษรให้ดูเป็นอีเมลคนจริงๆ (mail.tm ไม่รองรับจุด . ในชื่ออีเมล)
-	emailPrefix := fmt.Sprintf("davidsmith%d", time.Now().UnixNano()%100000)
+	// สุ่มตัวอักษรให้ดูเป็นอีเมลคนจริงๆ พร้อมเพิ่ม botID เพื่อป้องกันการชนกันเวลาสร้างพร้อมกัน
+	emailPrefix := fmt.Sprintf("david%d%d", botID, time.Now().UnixNano()%100000)
 	email := fmt.Sprintf("%s@%s", emailPrefix, domain)
 	password := "P@ssw0rd123!"
 
@@ -153,7 +204,7 @@ func solveTurnstileLocal(pageURL string) string {
     return ""
 }
 // --- ฟังก์ชันยิงขอ OTP ไปที่เว็บเป้าหมาย ---
-func sendOTPRequest(client tls_client.HttpClient, email string, turnstileToken string) string {
+func sendOTPRequest(client tls_client.HttpClient, email string, turnstileToken string, botID int) string {
 	// ⚠️ หมายเหตุ: URL ของ API ส่ง OTP และโครงสร้าง JSON (Payload) อาจต้องเปลี่ยนตาม Endpoint จริงที่แกะได้จาก Network Tab
 	apiEndpoint := "https://core-api.thehof.gg/player/register/otp/request"
 
@@ -181,7 +232,14 @@ func sendOTPRequest(client tls_client.HttpClient, email string, turnstileToken s
 	// อ่าน Response Body เพื่อดูข้อความที่เซิร์ฟเวอร์ตอบกลับมาจริงๆ
 	respBody := new(bytes.Buffer)
 	respBody.ReadFrom(resp.Body)
-	fmt.Printf("🔍 Server Response (%d): %s\n", resp.StatusCode, respBody.String())
+	respStr := respBody.String()
+	fmt.Printf("🔍 Server Response (%d): %s\n", resp.StatusCode, respStr)
+
+	// เช็คว่ามี Error แจ้งเตือนเรื่องการรอ (IP Block) ตอนขอ OTP หรือไม่
+	if strings.Contains(respStr, "\\u0e04\\u0e38\\u0e13\\u0e15\\u0e49\\u0e2d\\u0e07\\u0e23\\u0e2d") || strings.Contains(respStr, "คุณต้องรอ") {
+		fmt.Printf("[Bot-%d] ⚠️ ติด Limit IP ตอนขอ OTP! เซิร์ฟเวอร์แจ้งให้รอ\n", botID)
+		return "IP_BLOCKED" 
+	}
 
 	// ถ้า Status เป็น 200 หรือ 201 ถือว่าส่งคำขอสำเร็จ
 	if resp.StatusCode == 200 || resp.StatusCode == 201 {
@@ -202,7 +260,7 @@ func sendOTPRequest(client tls_client.HttpClient, email string, turnstileToken s
 }
 
 // --- ฟังก์ชันยืนยัน OTP ---
-func submitOTP(client tls_client.HttpClient, email string, otp string, reference string) string {
+func submitOTP(client tls_client.HttpClient, email string, otp string, reference string, botID int) string {
 	apiEndpoint := "https://core-api.thehof.gg/player/register/otp/verify"
 
 	// โครงสร้างข้อมูลตามที่เว็บต้องการ
@@ -252,11 +310,11 @@ func submitOTP(client tls_client.HttpClient, email string, otp string, reference
 }
 
 // --- ฟังก์ชันสมัครสมาชิกขั้นตอนสุดท้าย ---
-func completeRegistration(client tls_client.HttpClient, email, verifyToken, turnstileToken string) {
+func completeRegistration(client tls_client.HttpClient, email, verifyToken, turnstileToken string, botID int) int {
 	apiEndpoint := "https://core-api.thehof.gg/player/register"
 
-	// สุ่ม Username เพื่อไม่ให้ซ้ำ
-	username := fmt.Sprintf("davidz%d", time.Now().UnixNano()%1000000)
+	// สุ่ม Username ให้มีตัวพิมพ์ใหญ่ผสมพิมพ์เล็กและตัวเลข เพื่อให้ผ่านเงื่อนไขตั้งรหัสผ่าน (ID=Pass)
+	username := fmt.Sprintf("Davidz%d%d", botID, time.Now().UnixNano()%1000000)
 
 	payloadMap := map[string]interface{}{
 		"username":                username,
@@ -265,8 +323,8 @@ func completeRegistration(client tls_client.HttpClient, email, verifyToken, turn
 		"country_code":            "TH",
 		"calling_code":            "+66",
 		"phone_number":            "098127376",
-		"password":                "Thailand2024",
-		"password_confirmation":   "Thailand2024",
+		"password":                username,
+		"password_confirmation":   username,
 		"is_newsletter_accepted":  true,
 		"captcha_type":            "CF_TURNSTILE",
 		"captcha_token":           turnstileToken,
@@ -278,7 +336,7 @@ func completeRegistration(client tls_client.HttpClient, email, verifyToken, turn
 	req, err := fhttp.NewRequest("POST", apiEndpoint, bytes.NewReader(payload))
 	if err != nil {
 		fmt.Println("❌ สร้างคำขอสมัครสมาชิกไม่สำเร็จ")
-		return
+		return 2
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
@@ -286,29 +344,61 @@ func completeRegistration(client tls_client.HttpClient, email, verifyToken, turn
 	resp, err := client.Do(req)
 	if err != nil {
 		fmt.Printf("❌ ยิง API สมัครสมาชิกไม่สำเร็จ: %v\n", err)
-		return
+		return 2
 	}
 	defer resp.Body.Close()
 
 	respBody := new(bytes.Buffer)
 	respBody.ReadFrom(resp.Body)
+	respStr := respBody.String()
 	
-	fmt.Printf("🔍 Final Register Response (%d): %s\n", resp.StatusCode, respBody.String())
+	fmt.Printf("🔍 Final Register Response (%d): %s\n", resp.StatusCode, respStr)
+
+	// เช็คว่ามี Error แจ้งเตือนเรื่องการรอ 6 นาทีหรือไม่ (เช็คจากข้อความภาษาไทยที่ถูกเข้ารหัส Unicode)
+	// "\u0e04\u0e38\u0e13\u0e15\u0e49\u0e2d\u0e07\u0e23\u0e2d" = "คุณต้องรอ"
+	if strings.Contains(respStr, "\\u0e04\\u0e38\\u0e13\\u0e15\\u0e49\\u0e2d\\u0e07\\u0e23\\u0e2d") || strings.Contains(respStr, "คุณต้องรอ") {
+		fmt.Printf("[Bot-%d] ⚠️ ติด Limit IP! เซิร์ฟเวอร์แจ้งให้รอ 6 นาที\n", botID)
+		return 1 // รหัส 1 หมายถึง IP โดนบล็อคชั่วคราว
+	}
 
 	if resp.StatusCode == 200 || resp.StatusCode == 201 {
 		fmt.Println("🌟 สมัครสมาชิกเสร็จสมบูรณ์ 100% 🌟")
 		fmt.Printf("===============================\n")
 		fmt.Printf("Email: %s\n", email)
-		fmt.Printf("Password: Thailand2024\n")
+		fmt.Printf("Password: %s\n", username)
 		fmt.Printf("Username: %s\n", username)
 		fmt.Printf("===============================\n")
+		
+		// บันทึกบัญชีที่สมัครสำเร็จลงไฟล์ accounts.txt
+		saveAccount(username)
+		return 0 // รหัส 0 หมายถึง สำเร็จ
 	} else {
 		fmt.Println("⚠️ สมัครสมาชิกขั้นตอนสุดท้ายไม่สำเร็จ")
+		return 2 // รหัส 2 หมายถึง Error อื่นๆ
+	}
+}
+
+// --- ฟังก์ชันบันทึกข้อมูลบัญชีลงไฟล์ ---
+func saveAccount(username string) {
+	// สร้างหรือเปิดไฟล์เพื่อเขียนต่อท้าย
+	file, err := os.OpenFile("accounts.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Printf("❌ ไม่สามารถเปิดไฟล์ accounts.txt ได้: %v\n", err)
+		return
+	}
+	defer file.Close()
+
+	// รูปแบบ: เก็บบันทึกแค่ ID (Username)
+	logEntry := fmt.Sprintf("%s\n", username)
+	if _, err := file.WriteString(logEntry); err != nil {
+		fmt.Printf("❌ ไม่สามารถเขียนข้อมูลบัญชีลงไฟล์ได้: %v\n", err)
+	} else {
+		fmt.Println("📝 บันทึก ID ลงไฟล์ accounts.txt เรียบร้อยแล้ว")
 	}
 }
 
 // --- ฟังก์ชันเช็คกล่องจดหมายเพื่อดึงรหัส OTP ---
-func fetchOTP(email, password string) string {
+func fetchOTP(email, password string, botID int) string {
 	// ล็อกอินเพื่อเอา Token ของ Mail.tm
 	authPayload, _ := json.Marshal(map[string]string{"address": email, "password": password})
 	resp, err := http.Post("https://api.mail.tm/token", "application/json", bytes.NewBuffer(authPayload))
@@ -334,10 +424,10 @@ func fetchOTP(email, password string) string {
 		return ""
 	}
 
-	// วนลูปเช็คอีเมลเข้า
+	// วนลูปเช็คอีเมลเข้า (รอสูงสุด 10 วินาที)
 	client := &http.Client{}
-	for i := 0; i < 20; i++ {
-		time.Sleep(3 * time.Second)
+	for i := 0; i < 5; i++ {
+		time.Sleep(2 * time.Second)
 
 		req, _ := http.NewRequest("GET", "https://api.mail.tm/messages", nil)
 		req.Header.Set("Authorization", "Bearer "+authRes.Token)
@@ -371,46 +461,204 @@ func fetchOTP(email, password string) string {
 			}
 
 			// ถ้า Intro ว่างเปล่า หรือหาไม่เจอ ให้ลองดึงเนื้อหาเต็มของอีเมลมาเช็ค
-			fmt.Println("🔍 ไม่พบ OTP ใน Intro กำลังดึงเนื้อหาเต็มของอีเมลมาตรวจสอบ...")
+			fmt.Printf("[Bot-%d] 🔍 ไม่พบ OTP ใน Intro กำลังดึงเนื้อหาเต็มของอีเมลมาตรวจสอบ...\n", botID)
 			reqFull, _ := http.NewRequest("GET", "https://api.mail.tm/messages/"+msgId, nil)
 			reqFull.Header.Set("Authorization", "Bearer "+authRes.Token)
 			respFull, errFull := client.Do(reqFull)
 			if errFull == nil {
 				var msgFull struct {
-					Text string `json:"text"`
+					Text string   `json:"text"`
 					Html []string `json:"html"`
 				}
 				json.NewDecoder(respFull.Body).Decode(&msgFull)
 				respFull.Body.Close()
 				
-				// ลองหาใน Text แบบปกติก่อน
-				otpFull := re.FindString(msgFull.Text)
-				if otpFull != "" {
-					fmt.Printf("🎯 สกัดรหัส OTP จากเนื้อหาเต็มสำเร็จ: %s\n", otpFull)
-					return otpFull
+				// รวม Text และ Html
+				fullContent := msgFull.Text
+				for _, h := range msgFull.Html {
+					fullContent += h
 				}
 
-				// ถ้าหาแบบปกติไม่เจอ อาจจะมีการเว้นวรรค เช่น 2 9 1 2 9 8 (จากรูป)
-				// ใช้ Regex หาตัวเลขที่อาจมีช่องว่างคั่น
-				reSpaced := regexp.MustCompile(`(?:\D|^)(\d\s*){6}(?:\D|$)`)
-				spacedMatch := reSpaced.FindString(msgFull.Text)
+				// ลบเนื้อหาใน <style> กรอง CSS ขยะทิ้ง (ป้องกันการจับ #000000)
+				reStyle := regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
+				fullContent = reStyle.ReplaceAllString(fullContent, " ")
+
+				// ลบ HTML Tags และลบช่องว่าง/ขึ้นบรรทัดใหม่ทั้งหมด
+				reTags := regexp.MustCompile(`<[^>]*>`)
+				cleanContent := reTags.ReplaceAllString(fullContent, " ")
+				
+				// ลองหาในรูปแบบปกติติดกัน 6 ตัว (ข้าม 000000 ที่อาจเป็นเศษ CSS)
+				reSixDigits := regexp.MustCompile(`\b\d{6}\b`)
+				matches := reSixDigits.FindAllString(cleanContent, -1)
+				for _, match := range matches {
+					if match != "000000" {
+						fmt.Printf("[Bot-%d] 🎯 สกัดรหัส OTP จากเนื้อหาเต็มสำเร็จ: %s\n", botID, match)
+						return match
+					}
+				}
+
+				// ถ้าหาแบบปกติไม่เจอ ให้ลบตัวอักษรที่ไม่ใช่ตัวเลขออก แล้วดูว่ามีตัวเลข 6 ตัวเรียงกันไหม
+				reGroups := regexp.MustCompile(`\d+`)
+				numberGroups := reGroups.FindAllString(cleanContent, -1)
+				for _, numStr := range numberGroups {
+					if len(numStr) == 6 && numStr != "000000" {
+						fmt.Printf("[Bot-%d] 🎯 สกัดรหัส OTP จากกลุ่มตัวเลขสำเร็จ: %s\n", botID, numStr)
+						return numStr
+					}
+				}
+
+				// ถ้ายาวๆ แล้วมีเว้นวรรค เราเอาเฉพาะตัวเลขใน cleanContent มาต่อกัน
+				// เช่น 2 9 1 2 9 8 ก็จะจับกลุ่มที่มี \d\s*\d\s*\d\s*\d\s*\d\s*\d
+				reSpaced2 := regexp.MustCompile(`(?:\D|^)(\d\s*){6}(?:\D|$)`)
+				spacedMatch := reSpaced2.FindString(cleanContent)
 				if spacedMatch != "" {
-					// ลบช่องว่างและอักขระที่ไม่ใช่ตัวเลขออกให้เหลือแค่ 6 ตัว
 					reClean := regexp.MustCompile(`\D+`)
 					cleanOtp := reClean.ReplaceAllString(spacedMatch, "")
 					if len(cleanOtp) >= 6 {
 						otpFinal := cleanOtp[:6]
-						fmt.Printf("🎯 สกัดรหัส OTP จากเนื้อหาแบบเว้นวรรคสำเร็จ: %s\n", otpFinal)
-						return otpFinal
+						if otpFinal != "000000" {
+							fmt.Printf("[Bot-%d] 🎯 สกัดรหัส OTP จากเนื้อหาแบบเว้นวรรคสำเร็จ: %s\n", botID, otpFinal)
+							return otpFinal
+						}
 					}
 				}
 			}
 
-			fmt.Println("⚠️ มีอีเมลเข้า แต่หาตัวเลข OTP 6 หลักไม่เจอ")
+			fmt.Printf("[Bot-%d] ⚠️ มีอีเมลเข้า แต่หาตัวเลข OTP 6 หลักไม่เจอ\n", botID)
 			return ""
 		}
-		fmt.Println("🔄 กำลังรออีเมล OTP เข้า...")
+		fmt.Printf("[Bot-%d] 🔄 กำลังรออีเมล OTP เข้า...\n", botID)
 	}
-	fmt.Println("❌ หมดเวลา: ไม่พบอีเมล OTP ส่งเข้ามา")
+	fmt.Printf("[Bot-%d] ❌ หมดเวลา: ไม่พบอีเมล OTP ส่งเข้ามา\n", botID)
 	return ""
+}
+
+// ==========================================
+// ส่วนของการควบคุม VPN (VPN Gate + OpenVPN)
+// ==========================================
+
+// โครงสร้างข้อมูลสำหรับอ่านไฟล์ CSV จาก VPN Gate
+type VpnServer struct {
+	HostName string
+	IP       string
+	Country  string
+	Speed    string
+	Config   string // Base64 เข้ารหัส OpenVPN Config
+}
+
+var currentVpnCmd *exec.Cmd
+
+// --- ฟังก์ชันตัดการเชื่อมต่อ VPN ---
+func disconnectVPN() {
+	fmt.Println("🔌 กำลังตัดการเชื่อมต่อ VPN ปัจจุบัน...")
+	if currentVpnCmd != nil && currentVpnCmd.Process != nil {
+		currentVpnCmd.Process.Kill()
+		currentVpnCmd.Wait()
+		currentVpnCmd = nil
+	}
+	// สั่งปิด openvpn.exe ทั้งหมดในเครื่องเพื่อความชัวร์
+	exec.Command("taskkill", "/F", "/IM", "openvpn.exe").Run()
+	time.Sleep(2 * time.Second)
+}
+
+// --- ฟังก์ชันดึงรายชื่อ VPN และเชื่อมต่อแบบสุ่ม ---
+func connectRandomVPN() bool {
+	vpnLock.Lock()
+	defer vpnLock.Unlock()
+
+	// เช็คว่าถ้าเพิ่งเปลี่ยน VPN ไปไม่ถึง 45 วินาที ให้ข้ามไปเลย เพื่อไม่ให้บอทตีกัน
+	if time.Since(lastVPNChange) < 45*time.Second {
+		fmt.Println("🔄 เพิ่งสลับ VPN ไปเมื่อครู่นี้ บอทตัวนี้จะใช้ VPN ใหม่ไปเลย...")
+		return true
+	}
+
+	disconnectVPN()
+	fmt.Println("🌍 กำลังดึงรายชื่อ VPN จาก VPN Gate (ญี่ปุ่น, เกาหลี, ไทย)...")
+
+	// ดึงข้อมูลรายชื่อ VPN (รูปแบบ CSV)
+	resp, err := http.Get("http://www.vpngate.net/api/iphone/")
+	if err != nil {
+		fmt.Printf("❌ โหลดรายชื่อ VPN ไม่สำเร็จ: %v\n", err)
+		return false
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	csvData := string(bodyBytes)
+	lines := strings.Split(csvData, "\n")
+
+	var servers []VpnServer
+
+	// ข้าม 2 บรรทัดแรกที่เป็น Header
+	for i := 2; i < len(lines); i++ {
+		columns := strings.Split(lines[i], ",")
+		if len(columns) > 14 {
+			country := columns[5]
+			// กรองเอาเฉพาะโซนเอเชีย เพื่อให้เน็ตไม่ช้าเกินไปจนขอ Captcha ไม่ผ่าน
+			if country == "Japan" || country == "Thailand" || country == "Korea Republic of" || country == "Vietnam" {
+				servers = append(servers, VpnServer{
+					HostName: columns[0],
+					IP:       columns[1],
+					Country:  country,
+					Speed:    columns[4],
+					Config:   columns[14], // ข้อมูล Config อยู่คอลัมน์ที่ 14 (Base64)
+				})
+			}
+		}
+	}
+
+	if len(servers) == 0 {
+		fmt.Println("❌ ไม่พบเซิร์ฟเวอร์ VPN ในโซนเอเชีย")
+		return false
+	}
+
+	// สุ่มเลือก VPN มา 1 ตัว
+	rand.Seed(time.Now().UnixNano())
+	selected := servers[rand.Intn(len(servers))]
+	fmt.Printf("🎯 สุ่มได้ VPN: %s (IP: %s)\n", selected.Country, selected.IP)
+
+	// ถอดรหัส Base64 ของ Config ไฟล์
+	configBytes, err := base64.StdEncoding.DecodeString(selected.Config)
+	if err != nil {
+		fmt.Println("❌ ถอดรหัสไฟล์ Config ไม่สำเร็จ")
+		return false
+	}
+
+	// เขียนไฟล์ Config ลงเครื่องเพื่อเตรียมรัน
+	configFileName := fmt.Sprintf("vpn_%d.ovpn", time.Now().UnixNano())
+	err = os.WriteFile(configFileName, configBytes, 0644)
+	if err != nil {
+		fmt.Printf("❌ สร้างไฟล์ VPN ไม่สำเร็จ: %v\n", err)
+		return false
+	}
+
+	fmt.Println("🚀 กำลังเชื่อมต่อ VPN (รอประมาณ 15 วินาที)...")
+
+	// ใช้คำสั่ง CMD เรียก OpenVPN ให้ทำงานโดยอ่านไฟล์ที่โหลดมา
+	openVpnPath := `C:\Program Files\OpenVPN\bin\openvpn.exe`
+	
+	// รัน OpenVPN แบบ Background พร้อมรับ Log กรณีพัง
+	currentVpnCmd = exec.Command(openVpnPath, "--config", configFileName)
+	
+	// สั่งรันใน Background
+	err = currentVpnCmd.Start()
+	if err != nil {
+		fmt.Printf("❌ ไม่สามารถรัน OpenVPN ได้: %v\n(โปรดเช็คว่าติดตั้ง OpenVPN ไว้ที่ C:\\Program Files\\OpenVPN\\bin\\openvpn.exe หรือไม่)\n", err)
+		return false
+	}
+
+	// ลบไฟล์ Config เก่าทิ้งหลังจากรันเสร็จ (หรือรอให้โปรแกรมปิดค่อยลบ)
+	go func(name string) {
+		time.Sleep(30 * time.Second)
+		os.Remove(name)
+	}(configFileName)
+
+	// รอให้ VPN เชื่อมต่อติด (ให้เวลา 12 วินาที)
+	time.Sleep(12 * time.Second)
+	
+	// อัปเดตเวลาที่เปลี่ยน VPN ล่าสุด
+	lastVPNChange = time.Now()
+	
+	fmt.Println("✅ เชื่อมต่อ VPN เสร็จสิ้น! น่าจะได้ IP ใหม่แล้ว")
+	return true
 }
