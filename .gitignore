@@ -1,0 +1,25 @@
+﻿# Visual Studio & IDE
+.vs/
+*.user
+*.suo
+
+# Build outputs
+UI/bin/
+UI/obj/
+ApibotWarZ_Release/
+Launcher_Dist/
+ApibotWarZ.Launcher.deps.json
+ApibotWarZ.Launcher.dll
+ApibotWarZ.Launcher.exe
+ApibotWarZ.Launcher.pdb
+ApibotWarZ.Launcher.runtimeconfig.json
+Microsoft.Windows.SDK.NET.dll
+WinRT.Runtime.dll
+
+# Release archives
+*.zip
+
+# Temporary VPN files and logs
+vpn_*.ovpn
+openvpn.log
+blocked_ips.json
