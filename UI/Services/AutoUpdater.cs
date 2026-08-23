@@ -12,7 +12,7 @@ namespace ApibotWarZ.UI.Services
 {
     public static class AutoUpdater
     {
-        public static readonly string CurrentVersion = "1.4";
+        public static readonly string CurrentVersion = "1.6";
         private static readonly byte[] ObfuscationKey = Encoding.UTF8.GetBytes("W@rZ_Ap1_B0t_S3cur3_Upd@t3_2026!");
 
         public class UpdateInfo

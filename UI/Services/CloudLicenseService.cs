@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
@@ -10,10 +11,12 @@ namespace ApibotWarZ.UI.Services
 {
     public class CloudLicenseService
     {
-        public static string WebAppUrl { get; set; } = "https://script.google.com/macros/s/AKfycbzgMfFX1cjZomJAgmnE_QA9r2NjzCk1UO09BetVNhyb3YxQPITz7Ht_EPkqeJZlIPKV/exec";
+        // ⚡ Cloudflare Worker High-Speed Endpoint (15ms)
+        public static string WebAppUrl { get; set; } = "https://warz-license.skysaber086.workers.dev";
+        public static readonly string AppName = "apibot";
 
         private static readonly HttpClientHandler _handler = new HttpClientHandler { AllowAutoRedirect = true };
-        private static readonly HttpClient _httpClient = new HttpClient(_handler) { Timeout = TimeSpan.FromSeconds(20) };
+        private static readonly HttpClient _httpClient = new HttpClient(_handler) { Timeout = TimeSpan.FromSeconds(15) };
 
         /// <summary>
         /// Pure HWID Auto-Login: Checks if this machine's HWID is already bound to a valid active license in the cloud.
@@ -25,7 +28,7 @@ namespace ApibotWarZ.UI.Services
                 string hwid = GetHWID();
                 string ip = await GetPublicIpAsync();
 
-                string json = $"{{\"action\":\"checkHwid\",\"app\":\"apibot\",\"hwid\":\"{JsonEscape(hwid)}\",\"ip\":\"{JsonEscape(ip)}\"}}";
+                string json = $"{{\"action\":\"checkhwid\",\"app\":\"{AppName}\",\"hwid\":\"{JsonEscape(hwid)}\",\"ip\":\"{JsonEscape(ip)}\"}}";
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
                 var response = await _httpClient.PostAsync(WebAppUrl, content);
@@ -36,11 +39,11 @@ namespace ApibotWarZ.UI.Services
                 bool success = root.TryGetProperty("success", out var s) && s.GetBoolean();
                 string message = root.TryGetProperty("message", out var m) ? m.GetString() ?? "" : "";
                 string key = root.TryGetProperty("key", out var k) ? k.GetString() ?? "" : "";
-                string expiry = root.TryGetProperty("expiry", out var exp) ? exp.GetString() ?? "Active" : "Active";
+                string expiry = root.TryGetProperty("expiry", out var exp) ? exp.GetString() ?? "Lifetime" : "Lifetime";
 
                 if (success)
                 {
-                    return (true, message, key, string.IsNullOrEmpty(expiry) ? "Active" : expiry);
+                    return (true, message, key, string.IsNullOrEmpty(expiry) ? "Lifetime" : expiry);
                 }
 
                 return (false, string.IsNullOrEmpty(message) ? "ไม่พบสิทธิ์ของเครื่องนี้ในระบบ" : message, "", "");
@@ -64,7 +67,7 @@ namespace ApibotWarZ.UI.Services
                 string hwid = GetHWID();
                 string ip = await GetPublicIpAsync();
 
-                string json = $"{{\"action\":\"activate\",\"app\":\"apibot\",\"key\":\"{JsonEscape(licenseKey.Trim())}\",\"hwid\":\"{JsonEscape(hwid)}\",\"ip\":\"{JsonEscape(ip)}\"}}";
+                string json = $"{{\"action\":\"activate\",\"app\":\"{AppName}\",\"key\":\"{JsonEscape(licenseKey.Trim())}\",\"hwid\":\"{JsonEscape(hwid)}\",\"ip\":\"{JsonEscape(ip)}\"}}";
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
                 var response = await _httpClient.PostAsync(WebAppUrl, content);
@@ -74,11 +77,11 @@ namespace ApibotWarZ.UI.Services
                 var root = doc.RootElement;
                 bool success = root.TryGetProperty("success", out var s) && s.GetBoolean();
                 string message = root.TryGetProperty("message", out var m) ? m.GetString() ?? "" : "";
-                string expiry = root.TryGetProperty("expiry", out var exp) ? exp.GetString() ?? "Active" : "Active";
+                string expiry = root.TryGetProperty("expiry", out var exp) ? exp.GetString() ?? "Lifetime" : "Lifetime";
 
                 if (success)
                 {
-                    return (true, message, string.IsNullOrEmpty(expiry) ? "Active" : expiry);
+                    return (true, message, string.IsNullOrEmpty(expiry) ? "Lifetime" : expiry);
                 }
 
                 return (false, string.IsNullOrEmpty(message) ? "ไม่พบ License Key นี้ในระบบ" : message, "");
@@ -87,6 +90,36 @@ namespace ApibotWarZ.UI.Services
             {
                 return (false, $"ข้อผิดพลาดในการเชื่อมต่อ: {ex.Message}", "");
             }
+        }
+
+        /// <summary>
+        /// Formats ISO expiry string to friendly Thai representation with live countdown support.
+        /// </summary>
+        public static string FormatThaiExpiry(string isoExpiry)
+        {
+            if (string.IsNullOrEmpty(isoExpiry) || isoExpiry.Equals("Lifetime", StringComparison.OrdinalIgnoreCase))
+                return "ตลอดชีพ (Lifetime)";
+
+            if (DateTime.TryParse(isoExpiry, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var expDate))
+            {
+                var now = DateTime.UtcNow;
+                var diff = expDate.ToUniversalTime() - now;
+
+                var thCulture = new CultureInfo("th-TH");
+                string thDateStr = expDate.ToLocalTime().ToString("dd/MM/yyyy", thCulture);
+
+                if (diff.TotalSeconds <= 0)
+                    return $"{thDateStr} (หมดอายุแล้ว)";
+
+                if (diff.TotalHours < 24)
+                    return $"{thDateStr} (เหลือ {(int)diff.TotalHours} ชม. {diff.Minutes} นาที)";
+
+                int days = (int)Math.Floor(diff.TotalDays);
+                int remHours = diff.Hours;
+                return remHours > 0 ? $"{thDateStr} (เหลือ {days} วัน {remHours} ชม.)" : $"{thDateStr} (เหลือ {days} วัน)";
+            }
+
+            return isoExpiry;
         }
 
         private static string JsonEscape(string val)
