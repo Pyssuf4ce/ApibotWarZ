@@ -451,14 +451,10 @@ def api_acquire_submit(wid: int):
     with submit_lock:
         now = time.time()
         diff = now - last_submit_time
-        # Pacing: Dynamic Jitter 2.2s - 2.8s across all workers
-        # Guarantees submit frequency stays comfortably below server 429 threshold (<24 req/min)
-        import random
-        target_interval = 2.2 + random.uniform(0.1, 0.6)
-        if diff < target_interval:
-            time.sleep(target_interval - diff)
+        if diff < 1.5:
+            time.sleep(1.5 - diff)
         last_submit_time = time.time()
-        print(f"🚦 [Worker-{wid}] ได้รับสิทธิ์กดเข้าสู่ระบบ (Pacing Submit {target_interval:.1f}s ป้องกัน 429/1015)", flush=True)
+        print(f"🚦 [Worker-{wid}] ได้รับสิทธิ์กดเข้าสู่ระบบ (Pacing Submit 1.5s ป้องกัน 429/1015)", flush=True)
         return {"status": "ok", "wid": wid}
 
 @app.get("/worker/{wid}/status")
@@ -610,19 +606,16 @@ def do_login(req: LoginRequest):
             status = res_data.get("status", "failed")
             token = res_data.get("token", "")
             fail_reason = res_data.get("reason", "เข้าสู่ระบบไม่สำเร็จ")
-            is_limit = (
-                res_data.get("is_limit", False) or
-                "1015" in fail_reason or 
-                "limit" in fail_reason.lower() or 
-                "rate" in fail_reason.lower() or
-                "too many" in fail_reason.lower() or
-                "429" in fail_reason
-            )
+            is_1015 = "1015" in fail_reason
+            is_429 = "429" in fail_reason or "too many" in fail_reason.lower() or "rate" in fail_reason.lower()
+            is_limit = res_data.get("is_limit", False) or is_1015 or is_429 or ("limit" in fail_reason.lower())
 
-            if is_limit:
-                print(f"🛑 [Req-{req_id}] บัญชี '{req.username}' [Worker-{assigned_wid}] ติด Limit IP (429 / 1015) — รอ 30s แล้วรีโหลดหน้าใหม่ (ไม่ปิด Chrome)", flush=True)
-                # รอ 30s ให้ Cloudflare cooldown ก่อน — ไม่ต้องปิด Chrome เพราะการเปิดใหม่ทันทียิ่งชนซ้ำ
-                time.sleep(30)
+            if is_1015:
+                print(f"🛑 [Req-{req_id}] บัญชี '{req.username}' [Worker-{assigned_wid}] ติด Cloudflare 1015 — รอคูลดาวน์ 10s", flush=True)
+                time.sleep(10)
+            elif is_429:
+                print(f"⏳ [Req-{req_id}] บัญชี '{req.username}' [Worker-{assigned_wid}] ติด Too Many Requests (429) — พักสั้นๆ 3s แล้วทำรายการต่อทันที", flush=True)
+                time.sleep(3)
 
             if status == "success":
                 if token:

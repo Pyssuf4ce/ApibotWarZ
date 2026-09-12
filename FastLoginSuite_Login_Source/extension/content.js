@@ -495,9 +495,9 @@
   }
 
   setInputValue(userInput, currentTask.username);
-  await new Promise(r => setTimeout(r, 120 + Math.floor(Math.random() * 100)));
   setInputValue(passInput, currentTask.password);
-  await new Promise(r => setTimeout(r, 200 + Math.floor(Math.random() * 150)));
+
+  await new Promise(r => setTimeout(r, 400));
 
   // Step 4: Request Paced Submit Permit to guarantee NO 429 Collisions
   console.log(`[FastLogin] 🚦 กำลังรอคิว Pacing ป้องกันชน Limit ก่อนกดยิงล็อกอิน (Worker-${wid})...`);
@@ -505,8 +505,8 @@
     await fetch(`http://127.0.0.1:5000/worker/${wid}/acquire_submit`, { cache: "no-store" });
   } catch (e) {}
 
-  // Human reaction jitter 250-500ms
-  await new Promise(r => setTimeout(r, 250 + Math.floor(Math.random() * 250)));
+  // Jitter delay 0-600ms เพิ่มเติม เพื่อกระจาย timing ป้องกัน 429/1015 แม้ผ่าน pacing แล้ว
+  await new Promise(r => setTimeout(r, Math.floor(Math.random() * 600)));
 
   console.log("[FastLogin] 🚀 กำลังคลิกปุ่มเข้าสู่ระบบ (Submit)...");
   

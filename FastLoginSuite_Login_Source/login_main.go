@@ -451,19 +451,19 @@ func runBatchEngine() {
 
 			// 3. จัดการคูลดาวน์และคืน RAM
 			if limitEncountered {
-				fmt.Printf("⏳ [Cool-down] มีบัญชีติด Limit Cloudflare 1015 — กำลังปิดแท็บและพักรอ IP คูลดาวน์ 15 วินาที เพื่อรันไอดีที่ติด Limit ใหม่ทันที (ไม่ข้ามไอดี)...\n")
+				fmt.Printf("⏳ [Cool-down] มีบัญชีติด Limit 429 — พักสั้นๆ 3 วินาที เพื่อรันไอดีใหม่ต่อทันที...\n")
 				closeBatchOnServer()
-				time.Sleep(15 * time.Second)
+				time.Sleep(3 * time.Second)
 				break // สั่ง break ทันทีเพื่อกลับไปคิวหลัก และดึงไอดีที่ติด Limit มารันต่อทันที ไม่ข้ามไปไอดีถัดไป!
 			} else if (batchNum%3 == 0) || (bIdx+1 == totalBatches) {
-				fmt.Printf("🛑 [รอบที่ %d/%d] ล้างแคชรีเฟรชเบราว์เซอร์ และพักคูลดาวน์ 8s ป้องกันเพดาน 10 req/min ของเว็บ...\n", batchNum, totalBatches)
+				fmt.Printf("🛑 [รอบที่ %d/%d] ล้างแคชรีเฟรชเบราว์เซอร์ และพักคูลดาวน์ 4s...\n", batchNum, totalBatches)
 				closeBatchOnServer()
-				time.Sleep(8 * time.Second)
+				time.Sleep(4 * time.Second)
 			} else {
 				if requeueCount > 0 {
-					time.Sleep(2 * time.Second)
-				} else if bIdx+1 < totalBatches {
 					time.Sleep(1 * time.Second)
+				} else if bIdx+1 < totalBatches {
+					time.Sleep(500 * time.Millisecond)
 				}
 			}
 		}
