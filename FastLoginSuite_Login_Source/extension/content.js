@@ -2,23 +2,31 @@
 (async function() {
   console.log("[FastLogin] Content script loaded on:", window.location.href);
 
-  // Helper to safely set React/Vue/Standard input value
+  // Robust React / Vue / Standard Input Value Setter
   function setInputValue(el, value) {
     if (!el) return false;
     try {
-      const proto = window.HTMLInputElement.prototype;
-      const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
-      if (setter) {
-        setter.call(el, value);
-      } else {
-        el.value = value;
+      el.focus();
+      const lastValue = el.value;
+      el.value = value;
+      const tracker = el._valueTracker;
+      if (tracker) {
+        tracker.setValue(lastValue);
       }
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-      el.dispatchEvent(new Event("blur", { bubbles: true }));
+      const protoSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+      if (protoSetter) {
+        protoSetter.call(el, value);
+      }
+      el.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, data: value }));
+      el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true }));
+      el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));
+      el.dispatchEvent(new Event("blur", { bubbles: true, composed: true }));
       return true;
     } catch (e) {
-      return false;
+      try { el.value = value; } catch(ex) {}
+      return true;
     }
   }
 
@@ -436,16 +444,19 @@
   // Step 3: Fill Username & Password into the form
   console.log(`[FastLogin] ✍️ กำลังกรอกข้อมูลล็อกอินสำหรับ ${currentTask.username}...`);
 
-  const userInput = document.querySelector('#username') || 
-                    document.querySelector('#hofId') || 
-                    document.querySelector('input[name="username"]') || 
-                    document.querySelector('input[autocomplete="username"]') ||
-                    document.querySelector('input[type="text"]');
+  let passInput = document.querySelector('input[type="password"]') ||
+                  document.querySelector('#password') || 
+                  document.querySelector('input[name="password"]') || 
+                  document.querySelector('input[autocomplete="current-password"]');
 
-  const passInput = document.querySelector('#password') || 
-                    document.querySelector('input[name="password"]') || 
-                    document.querySelector('input[autocomplete="current-password"]') ||
-                    document.querySelector('input[type="password"]');
+  let userInput = document.querySelector('#username') || 
+                  document.querySelector('#hofId') || 
+                  document.querySelector('input[name="username"]') || 
+                  document.querySelector('input[name="account"]') || 
+                  document.querySelector('input[name="email"]') || 
+                  document.querySelector('input[autocomplete="username"]') ||
+                  document.querySelector('input[type="text"]') ||
+                  document.querySelector('input:not([type="password"]):not([type="hidden"]):not([type="checkbox"])');
 
   if (!userInput || !passInput) {
     console.error("[FastLogin] ❌ ไม่พบช่องกรอกข้อมูลใน DOM!");
@@ -464,7 +475,7 @@
   setInputValue(userInput, currentTask.username);
   setInputValue(passInput, currentTask.password);
 
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r => setTimeout(r, 400));
 
   // Step 4: Request Paced Submit Permit to guarantee NO 429 Collisions
   console.log(`[FastLogin] 🚦 กำลังรอคิว Pacing ป้องกันชน Limit ก่อนกดยิงล็อกอิน (Worker-${wid})...`);
@@ -476,16 +487,35 @@
   await new Promise(r => setTimeout(r, Math.floor(Math.random() * 600)));
 
   console.log("[FastLogin] 🚀 กำลังคลิกปุ่มเข้าสู่ระบบ (Submit)...");
-  const submitBtn = document.querySelector('.button-submit') || 
-                    document.querySelector('button[type="submit"]') ||
-                    document.querySelector('button.submit') ||
-                    document.querySelector('.btn-primary') ||
-                    document.querySelector('form button');
+  
+  // Search for Submit Button across all possible DOM patterns
+  let submitBtn = document.querySelector('button[type="submit"]') ||
+                  document.querySelector('.button-submit') || 
+                  document.querySelector('button.submit') ||
+                  document.querySelector('.btn-primary') ||
+                  document.querySelector('form button');
+
+  if (!submitBtn) {
+    const allBtns = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"], a.btn, div.button'));
+    for (const b of allBtns) {
+      const txt = (b.innerText || b.textContent || b.value || "").trim();
+      if (txt.includes("เข้าสู่ระบบ") || txt.includes("ล็อกอิน") || txt.includes("Login") || txt.includes("Sign in") || txt.includes("Submit") || txt.includes("ยืนยัน")) {
+        submitBtn = b;
+        break;
+      }
+    }
+  }
 
   if (submitBtn) {
+    submitBtn.disabled = false;
+    submitBtn.removeAttribute('disabled');
+    submitBtn.focus();
     submitBtn.click();
-  } else {
-    userInput.form?.submit();
+    submitBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+  } else if (userInput.form) {
+    userInput.form.submit();
+  } else if (passInput.form) {
+    passInput.form.submit();
   }
 
   // Step 5: Monitor login result
