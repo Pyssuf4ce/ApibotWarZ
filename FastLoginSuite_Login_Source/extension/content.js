@@ -319,7 +319,7 @@
     }
   }
 
-  console.log(`[FastLogin] 🚀 Worker ${wid} พร้อมทำงานบนหน้าล็อกอิน กำลังดึงงานจากเซิร์ฟเวอร์...`);
+  console.log(`[FastLogin] 🚀 Worker ${wid} พร้อมทำงานบนหน้าล็อกอิน...`);
 
   function checkIfRateLimited() {
     const title = (document.title || "").toLowerCase();
@@ -349,7 +349,90 @@
     return;
   }
 
+  // Helper: Find Turnstile Iframe
+  function findTurnstileIframe() {
+    const selectors = [
+      'iframe[src*="challenges.cloudflare.com"]',
+      'iframe[src*="cloudflare"]',
+      'iframe[src*="turnstile"]',
+      'iframe[title*="Cloudflare"]',
+      'iframe[title*="turnstile"]',
+      'iframe[title*="challenge"]',
+      '.cf-turnstile iframe',
+      'div[class*="turnstile"] iframe',
+      'div[id*="cf-"] iframe',
+      'iframe'
+    ];
+    for (const sel of selectors) {
+      const iframes = document.querySelectorAll(sel);
+      for (const ifr of iframes) {
+        const rect = ifr.getBoundingClientRect();
+        if (rect.width > 20 && rect.height > 20) {
+          return { element: ifr, rect: rect };
+        }
+      }
+    }
+    return null;
+  }
+
+  // Helper: Trigger CDP Click on Turnstile Checkbox
+  function triggerTurnstileClick() {
+    const found = findTurnstileIframe();
+    if (!found) return false;
+    const rect = found.rect;
+    const clickX = rect.left + Math.min(32, rect.width / 4);
+    const clickY = rect.top + (rect.height / 2);
+    console.log(`[FastLogin] 🖱️ กำลังส่งคำสั่งคลิกกล่อง Turnstile (CDP Event) ที่พิกัด (${Math.round(clickX)}, ${Math.round(clickY)})...`);
+    try {
+      chrome.runtime.sendMessage({
+        type: "CDP_CLICK",
+        x: clickX,
+        y: clickY
+      }, (res) => {
+        if (res && res.success) {
+          console.log("[FastLogin] ✅ CDP Click ส่งถึงบราวเซอร์เรียบร้อย");
+        }
+      });
+    } catch (e) {
+      console.warn("[FastLogin] CDP Click message error:", e);
+    }
+    return true;
+  }
+
+  // Background Turnstile Solver (runs immediately regardless of task state)
+  let turnstileToken = "";
+  let turnstileDone = false;
+
+  async function startTurnstileWatcher(maxSeconds = 35) {
+    const start = Date.now();
+    let clickAttempt = 0;
+    while ((Date.now() - start) < maxSeconds * 1000) {
+      const cfInput = document.querySelector('[name="cf-turnstile-response"]');
+      if (cfInput && cfInput.value && cfInput.value.length > 30) {
+        turnstileToken = cfInput.value;
+        turnstileDone = true;
+        console.log("[FastLogin] ✅ Cloudflare Turnstile ยืนยันสำเร็จ (Token พร้อมใช้งาน)");
+        return turnstileToken;
+      }
+
+      const elapsedSec = (Date.now() - start) / 1000;
+      // Start clicking after 1.5s if not solved, repeat every 2.0s
+      if (elapsedSec >= 1.5 && (elapsedSec - 1.5) >= clickAttempt * 2.0) {
+        clickAttempt++;
+        triggerTurnstileClick();
+      }
+
+      await new Promise(r => setTimeout(r, 200));
+    }
+    turnstileDone = true;
+    return turnstileToken;
+  }
+
+  // Start Turnstile Watcher concurrently right now
+  const turnstilePromise = startTurnstileWatcher(35);
+
   // Step 1: Poll server for assigned task
+  console.log(`[FastLogin] 📥 กำลังดึงงานจากเซิร์ฟเวอร์สำหรับ Worker ${wid}...`);
   let currentTask = null;
   while (!currentTask) {
     if (checkIfRateLimited()) {
@@ -367,10 +450,10 @@
     if (currentTask && currentTask.username) {
       break;
     }
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 400));
   }
 
-  console.log(`[FastLogin] 📥 ได้รับงาน: บัญชี '${currentTask.username}'. กำลังรอ Turnstile...`);
+  console.log(`[FastLogin] 📥 ได้รับงาน: บัญชี '${currentTask.username}'. กำลังตรวจสอบสถานะ Turnstile...`);
   try {
     await chrome.storage.local.set({
       fastlogin_wid: wid,
@@ -381,54 +464,9 @@
 
   const tStart = Date.now();
 
-  // Step 2: Wait for Cloudflare Turnstile to auto-pass naturally
-  let turnstileSolved = false;
-  for (let step = 0; step < 120; step++) { // 120 * 250ms = 30.0s
-    const cfInput = document.querySelector('[name="cf-turnstile-response"]');
-    if (cfInput && cfInput.value && cfInput.value.length > 30) {
-      turnstileSolved = true;
-      console.log("[FastLogin] ✅ Cloudflare Turnstile ยืนยันสำเร็จ (มี Token)!");
-      break;
-    }
-
-    // Give Turnstile 6.0 seconds to auto-solve naturally without any interference.
-    // Only if stuck after 6.0s (interactive checkbox challenge), attempt a gentle CDP click once every 4.0s (16 steps).
-    if (step >= 24 && (step - 24) % 16 === 0) {
-      console.log(`[FastLogin] 🖱️ Turnstile ไม่ผ่านอัตโนมัติ กำลังกระตุ้นคลิกด้วย CDP Event...`);
-      try {
-        const iframes = document.querySelectorAll('iframe[src*="cloudflare"], iframe[src*="challenges"], iframe[src*="turnstile"]');
-        for (const ifr of iframes) {
-          const rect = ifr.getBoundingClientRect();
-          if (rect.width > 0 && rect.height > 0) {
-            const clickX = rect.left + 32;
-            const clickY = rect.top + (rect.height / 2);
-            chrome.runtime.sendMessage({
-              type: "CDP_CLICK",
-              x: clickX,
-              y: clickY
-            });
-            break;
-          }
-        }
-      } catch (e) {}
-    }
-
-    if (checkIfRateLimited()) {
-      await sendWorkerDone(wid, {
-        status: "failed",
-        worker_id: parseInt(wid, 10),
-        username: currentTask.username,
-        reason: "ติด Limit IP (Too Many Requests 429 / Cloudflare 1015)",
-        is_limit: true,
-        time: `${((Date.now() - tStart) / 1000).toFixed(1)}s`
-      });
-      return;
-    }
-
-    await new Promise(r => setTimeout(r, 250));
-  }
-
-  if (!turnstileSolved) {
+  // Step 2: Ensure Turnstile is Solved
+  const token = await turnstilePromise;
+  if (!token) {
     console.warn("[FastLogin] ⚠️ Turnstile timeout");
     await sendWorkerDone(wid, {
       status: "failed",
