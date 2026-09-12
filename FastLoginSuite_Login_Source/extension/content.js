@@ -416,8 +416,8 @@
       }
 
       const elapsedSec = (Date.now() - start) / 1000;
-      // Start clicking after 1.5s if not solved, repeat every 2.0s
-      if (elapsedSec >= 1.5 && (elapsedSec - 1.5) >= clickAttempt * 2.0) {
+      // Start clicking after 1.0s if not solved, repeat every 1.5s
+      if (elapsedSec >= 1.0 && (elapsedSec - 1.0) >= clickAttempt * 1.5) {
         clickAttempt++;
         triggerTurnstileClick();
       }

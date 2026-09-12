@@ -104,7 +104,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
         type: "mouseMoved",
         x: cx,
-        y: cy
+        y: cy,
+        pointerType: "mouse"
       }, () => {
         setTimeout(() => {
           // 2. Mouse press
@@ -114,7 +115,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             y: cy,
             button: "left",
             buttons: 1,
-            clickCount: 1
+            clickCount: 1,
+            pointerType: "mouse"
           }, () => {
             setTimeout(() => {
               // 3. Mouse release
@@ -124,13 +126,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 y: cy,
                 button: "left",
                 buttons: 0,
-                clickCount: 1
+                clickCount: 1,
+                pointerType: "mouse"
               }, () => {
                 sendResponse({ success: true, x: cx, y: cy });
               });
-            }, 80);
+            }, 60);
           });
-        }, 40);
+        }, 30);
       });
     });
     return true;
