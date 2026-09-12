@@ -1,27 +1,5 @@
-const attachedTabs = new Set();
-chrome.debugger.onDetach.addListener((source) => {
-  if (source && source.tabId) {
-    attachedTabs.delete(source.tabId);
-  }
-});
-
-function ensureDebuggerAttached(tabId) {
-  return new Promise((resolve) => {
-    if (attachedTabs.has(tabId)) {
-      return resolve(true);
-    }
-    const target = { tabId: tabId };
-    chrome.debugger.attach(target, "1.3", () => {
-      const err = chrome.runtime.lastError ? chrome.runtime.lastError.message : "";
-      if (err && !err.toLowerCase().includes("already attached")) {
-        console.warn("[FastLogin Debugger] Attach error:", err);
-        return resolve(false);
-      }
-      attachedTabs.add(tabId);
-      resolve(true);
-    });
-  });
-}
+// FastLogin Chrome Extension - Background Service Worker
+console.log("[FastLogin Background] Service Worker active");
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "GET_ALL_COOKIES") {
@@ -85,56 +63,55 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "CDP_CLICK") {
     const tabId = sender.tab ? sender.tab.id : null;
     if (!tabId) {
-      sendResponse({ success: false, error: "No tabId" });
+      sendResponse({ success: false });
       return true;
     }
     const target = { tabId: tabId };
     const cx = Math.round(msg.x);
     const cy = Math.round(msg.y);
 
-    ensureDebuggerAttached(tabId).then((attached) => {
-      if (!attached) {
-        sendResponse({ success: false, error: "Debugger attach failed" });
-        return;
-      }
-
-      console.log(`[FastLogin Debugger] 🖱️ Sending Trusted CDP Click at (${cx}, ${cy})...`);
-
-      // 1. Mouse move
+    function dispatchClickSequence() {
+      // 1. Move mouse to coordinate
       chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
         type: "mouseMoved",
         x: cx,
-        y: cy,
-        pointerType: "mouse"
+        y: cy
       }, () => {
         setTimeout(() => {
-          // 2. Mouse press
+          // 2. Press left mouse button
           chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
             type: "mousePressed",
             x: cx,
             y: cy,
             button: "left",
-            buttons: 1,
-            clickCount: 1,
-            pointerType: "mouse"
+            clickCount: 1
           }, () => {
             setTimeout(() => {
-              // 3. Mouse release
+              // 3. Release left mouse button
               chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
                 type: "mouseReleased",
                 x: cx,
                 y: cy,
                 button: "left",
-                buttons: 0,
-                clickCount: 1,
-                pointerType: "mouse"
+                clickCount: 1
               }, () => {
-                sendResponse({ success: true, x: cx, y: cy });
+                sendResponse({ success: true });
               });
-            }, 60);
+            }, 80);
           });
-        }, 30);
+        }, 35);
       });
+    }
+
+    chrome.debugger.attach(target, "1.3", () => {
+      const err = chrome.runtime.lastError ? chrome.runtime.lastError.message : "";
+      if (err && !err.includes("already attached")) {
+        console.warn("[FastLogin Debugger] Attach error:", err);
+        sendResponse({ success: false, error: err });
+        return;
+      }
+      console.log(`[FastLogin Debugger] 🖱️ Sending Trusted CDP Click at (${cx}, ${cy})...`);
+      dispatchClickSequence();
     });
     return true;
   }
