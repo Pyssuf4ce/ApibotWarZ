@@ -235,16 +235,17 @@
       }
       try {
         console.log(`[FastLogin] 🎁 กำลังยิงรับรางวัล (รอบ ${redeemAttempt + 1}):`, redeemUrl);
+        const headers = {
+          "Accept": "application/json, text/plain, */*",
+          "Content-Type": "application/json"
+        };
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
         const r = await fetch(redeemUrl, {
           method: "POST",
           credentials: "include",
-          headers: {
-            ...(token ? { "Authorization": `Bearer ${token}` } : {}),
-            "Accept": "application/json, text/plain, */*",
-            "Content-Type": "application/json",
-            "Origin": "https://member.thehof.gg",
-            "Referer": "https://member.thehof.gg/"
-          }
+          headers: headers
         });
 
         if (r.ok) {
