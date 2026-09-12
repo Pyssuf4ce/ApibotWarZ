@@ -451,10 +451,14 @@ def api_acquire_submit(wid: int):
     with submit_lock:
         now = time.time()
         diff = now - last_submit_time
-        if diff < 1.5:
-            time.sleep(1.5 - diff)
+        # Pacing: Dynamic Jitter 2.2s - 2.8s across all workers
+        # Guarantees submit frequency stays comfortably below server 429 threshold (<24 req/min)
+        import random
+        target_interval = 2.2 + random.uniform(0.1, 0.6)
+        if diff < target_interval:
+            time.sleep(target_interval - diff)
         last_submit_time = time.time()
-        print(f"🚦 [Worker-{wid}] ได้รับสิทธิ์กดเข้าสู่ระบบ (Pacing Submit 1.5s ป้องกัน 429/1015)", flush=True)
+        print(f"🚦 [Worker-{wid}] ได้รับสิทธิ์กดเข้าสู่ระบบ (Pacing Submit {target_interval:.1f}s ป้องกัน 429/1015)", flush=True)
         return {"status": "ok", "wid": wid}
 
 @app.get("/worker/{wid}/status")
