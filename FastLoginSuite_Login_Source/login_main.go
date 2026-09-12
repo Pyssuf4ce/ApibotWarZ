@@ -463,9 +463,9 @@ func runBatchEngine() {
 			// 3. จัดการคูลดาวน์และคืน RAM
 			if limitEncountered || requeueCount > 0 {
 				if limitEncountered {
-					fmt.Printf("⏳ [Cool-down] มีบัญชีติด Limit 429/1015 — ปิดจอพัก 10 วินาที เพื่อให้ Cloudflare คลายบล็อก IP แล้วรันต่ออัตโนมัติ...\n")
+					fmt.Printf("⏳ [Cool-down] มีบัญชีติด Limit 429 — พักสั้นๆ 3 วินาที เพื่อรันไอดีใหม่ต่อทันที...\n")
 					closeBatchOnServer()
-					time.Sleep(10 * time.Second)
+					time.Sleep(3 * time.Second)
 				} else {
 					fmt.Printf("🔄 [Priority Retry] มีบัญชีรอรันซ้ำ %d บัญชี — ดึงกลับมารันซ้ำทันทีในรอบถัดไป...\n", requeueCount)
 					closeBatchOnServer()
