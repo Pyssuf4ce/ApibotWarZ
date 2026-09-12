@@ -71,14 +71,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const cy = Math.round(msg.y);
 
     function dispatchClickSequence() {
-      // 1. Move mouse to coordinate
+      // 1. Bring page to front to ensure input focus
+      chrome.debugger.sendCommand(target, "Page.bringToFront", {}, () => {});
+
+      // 2. Move mouse to coordinate
       chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
         type: "mouseMoved",
         x: cx,
         y: cy
       }, () => {
         setTimeout(() => {
-          // 2. Press left mouse button
+          // 3. Press left mouse button
           chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
             type: "mousePressed",
             x: cx,
@@ -88,7 +91,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             clickCount: 1
           }, () => {
             setTimeout(() => {
-              // 3. Release left mouse button
+              // 4. Release left mouse button
               chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
                 type: "mouseReleased",
                 x: cx,
@@ -99,9 +102,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               }, () => {
                 sendResponse({ success: true });
               });
-            }, 80);
+            }, 100);
           });
-        }, 35);
+        }, 50);
       });
     }
 

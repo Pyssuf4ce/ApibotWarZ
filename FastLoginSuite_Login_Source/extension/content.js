@@ -421,24 +421,28 @@
         for (const ifr of iframes) {
           const rect = ifr.getBoundingClientRect();
           if (rect.width > 25 && rect.height > 25) {
-            // Checkbox in Cloudflare Turnstile iframe is located at x: ~28px, y: ~32px
-            const clickX = Math.round(rect.left + 28);
-            const clickY = Math.round(rect.top + (rect.height / 2));
-            
-            // Visual click ripple on page
-            try {
-              const dot = document.createElement("div");
-              dot.style.cssText = `position:fixed;left:${clickX - 10}px;top:${clickY - 10}px;width:20px;height:20px;border-radius:50%;background:rgba(239,68,68,0.75);border:2px solid #ffffff;z-index:2147483647;pointer-events:none;box-shadow:0 0 10px #ef4444;`;
-              document.body.appendChild(dot);
-              setTimeout(() => dot.remove(), 400);
-            } catch(e) {}
+            // Target the checkbox: test both standard (~32px) and Cloudflare challenge box (~55px)
+            const clickPoints = [
+              { x: Math.round(rect.left + 55), y: Math.round(rect.top + (rect.height / 2)) },
+              { x: Math.round(rect.left + 35), y: Math.round(rect.top + (rect.height / 2)) }
+            ];
 
-            console.log(`[FastLogin] 🖱️ ส่ง CDP Click ที่พิกัด (${clickX}, ${clickY})`);
-            chrome.runtime.sendMessage({
-              type: "CDP_CLICK",
-              x: clickX,
-              y: clickY
-            });
+            for (const pt of clickPoints) {
+              // Visual click ripple on page
+              try {
+                const dot = document.createElement("div");
+                dot.style.cssText = `position:fixed;left:${pt.x - 12}px;top:${pt.y - 12}px;width:24px;height:24px;border-radius:50%;background:rgba(239,68,68,0.8);border:2px solid #ffffff;z-index:2147483647;pointer-events:none;box-shadow:0 0 12px #ef4444;`;
+                document.body.appendChild(dot);
+                setTimeout(() => dot.remove(), 400);
+              } catch(e) {}
+
+              console.log(`[FastLogin] 🖱️ ส่ง CDP Click ที่พิกัด (${pt.x}, ${pt.y})`);
+              chrome.runtime.sendMessage({
+                type: "CDP_CLICK",
+                x: pt.x,
+                y: pt.y
+              });
+            }
             break;
           }
         }
