@@ -60,64 +60,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
   }
 
-  if (msg.type === "CDP_CLICK") {
-    const tabId = sender.tab ? sender.tab.id : null;
-    if (!tabId) {
-      sendResponse({ success: false });
-      return true;
-    }
-    const target = { tabId: tabId };
-    const cx = Math.round(msg.x);
-    const cy = Math.round(msg.y);
-
-    function dispatchClickSequence() {
-      // 1. Bring page to front to ensure input focus
-      chrome.debugger.sendCommand(target, "Page.bringToFront", {}, () => {});
-
-      // 2. Move mouse to coordinate
-      chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
-        type: "mouseMoved",
-        x: cx,
-        y: cy
-      }, () => {
-        setTimeout(() => {
-          // 3. Press left mouse button
-          chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
-            type: "mousePressed",
-            x: cx,
-            y: cy,
-            button: "left",
-            buttons: 1,
-            clickCount: 1
-          }, () => {
-            setTimeout(() => {
-              // 4. Release left mouse button
-              chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", {
-                type: "mouseReleased",
-                x: cx,
-                y: cy,
-                button: "left",
-                buttons: 0,
-                clickCount: 1
-              }, () => {
-                sendResponse({ success: true });
-              });
-            }, 100);
-          });
-        }, 50);
-      });
-    }
-
-    chrome.debugger.attach(target, "1.3", () => {
-      const err = chrome.runtime.lastError ? chrome.runtime.lastError.message : "";
-      if (err) {
-        console.log(`[FastLogin Debugger] Debugger attach notice: ${err}`);
-      }
-      console.log(`[FastLogin Debugger] 🖱️ Sending Trusted CDP Click at (${cx}, ${cy})...`);
-      dispatchClickSequence();
-    });
-    return true;
-  }
 
   if (msg.type === "FETCH_TASK") {
     fetch(`http://127.0.0.1:5000/worker/${msg.wid}/task`, {

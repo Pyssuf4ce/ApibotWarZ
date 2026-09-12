@@ -7,7 +7,6 @@
     "cookies",
     "storage",
     "tabs",
-    "debugger",
     "browsingData"
   ],
   "host_permissions": [

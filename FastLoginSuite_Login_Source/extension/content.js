@@ -412,41 +412,9 @@
       break;
     }
 
-    // If Turnstile is an interactive checkbox challenge, auto-click checkbox starting at 1.0s, repeat every 1.5s
-    if (step >= 4 && (step - 4) % 6 === 0) {
-      console.log(`[FastLogin] 🖱️ กำลังส่งคำสั่งคลิกกล่อง Turnstile (CDP Event)...`);
-      showHUD(`🖱️ กำลังคลิกยืนยัน Turnstile อัตโนมัติ...`, "#8b5cf6");
-      try {
-        const iframes = document.querySelectorAll('iframe[src*="cloudflare"], iframe[src*="challenges"], iframe[src*="turnstile"], .cf-turnstile iframe, iframe');
-        for (const ifr of iframes) {
-          const rect = ifr.getBoundingClientRect();
-          if (rect.width > 25 && rect.height > 25) {
-            // Target the checkbox: test both standard (~32px) and Cloudflare challenge box (~55px)
-            const clickPoints = [
-              { x: Math.round(rect.left + 55), y: Math.round(rect.top + (rect.height / 2)) },
-              { x: Math.round(rect.left + 35), y: Math.round(rect.top + (rect.height / 2)) }
-            ];
-
-            for (const pt of clickPoints) {
-              // Visual click ripple on page
-              try {
-                const dot = document.createElement("div");
-                dot.style.cssText = `position:fixed;left:${pt.x - 12}px;top:${pt.y - 12}px;width:24px;height:24px;border-radius:50%;background:rgba(239,68,68,0.8);border:2px solid #ffffff;z-index:2147483647;pointer-events:none;box-shadow:0 0 12px #ef4444;`;
-                document.body.appendChild(dot);
-                setTimeout(() => dot.remove(), 400);
-              } catch(e) {}
-
-              console.log(`[FastLogin] 🖱️ ส่ง CDP Click ที่พิกัด (${pt.x}, ${pt.y})`);
-              chrome.runtime.sendMessage({
-                type: "CDP_CLICK",
-                x: pt.x,
-                y: pt.y
-              });
-            }
-            break;
-          }
-        }
-      } catch (e) {}
+    // Cloudflare Turnstile auto-solves naturally within 0.5s - 1.5s when no debugger/synthetic events interfere
+    if (step === 0 || step === 8) {
+      showHUD(`🛡️ กำลังรอ Cloudflare Turnstile ยืนยันอัตโนมัติ...`, "#8b5cf6");
     }
 
     if (checkIfRateLimited()) {
