@@ -89,6 +89,30 @@ namespace ApibotWarZ.UI.Services
             return list;
         }
 
+        public static void SeedProfileFromNativeChrome(string profilePath)
+        {
+            try
+            {
+                string mainUserData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Google\Chrome\User Data");
+                if (!Directory.Exists(mainUserData)) return;
+
+                Directory.CreateDirectory(profilePath);
+
+                // Copy essential browser seeds and state to give 100% human Chrome trust score to Turnstile
+                string[] seedFiles = new[] { "Local State", "Variations", "First Run" };
+                foreach (var file in seedFiles)
+                {
+                    string src = Path.Combine(mainUserData, file);
+                    string dest = Path.Combine(profilePath, file);
+                    if (File.Exists(src) && !File.Exists(dest))
+                    {
+                        try { File.Copy(src, dest, true); } catch { }
+                    }
+                }
+            }
+            catch { }
+        }
+
         public static bool CreateBotProfiles(int count)
         {
             try
@@ -98,6 +122,7 @@ namespace ApibotWarZ.UI.Services
                 {
                     string profDir = Path.Combine(baseDir, $"worker_{i}");
                     Directory.CreateDirectory(profDir);
+                    SeedProfileFromNativeChrome(profDir);
                 }
                 return true;
             }
@@ -153,6 +178,7 @@ namespace ApibotWarZ.UI.Services
             string baseDir = GetBotProfilesBaseDir();
             string profilePath = Path.Combine(baseDir, $"worker_{wid}");
             Directory.CreateDirectory(profilePath);
+            SeedProfileFromNativeChrome(profilePath);
 
             string targetUrl = string.IsNullOrEmpty(url)
                 ? $"https://passport.thehof.gg/hall-of-fame-web/login#wid={wid}"
@@ -161,11 +187,12 @@ namespace ApibotWarZ.UI.Services
             int x = ((wid - 1) % 4) * 460 + 10;
             int y = (((wid - 1) / 4) % 2) * 50 + 10;
 
+            // Clean, pure Chrome arguments identical to natural Chrome launch
             var psi = new ProcessStartInfo
             {
                 FileName = chromeExe,
                 UseShellExecute = false,
-                Arguments = $"--user-data-dir=\"{profilePath}\" --load-extension=\"{extDir}\" --disable-extensions-except=\"{extDir}\" --window-position={x},{y} --window-size=800,720 --no-first-run --no-default-browser-check \"{targetUrl}\""
+                Arguments = $"--user-data-dir=\"{profilePath}\" --load-extension=\"{extDir}\" --window-position={x},{y} --window-size=800,720 --no-first-run --no-default-browser-check \"{targetUrl}\""
             };
 
             try
