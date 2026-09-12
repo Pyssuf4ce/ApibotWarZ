@@ -154,6 +154,23 @@ namespace ApibotWarZ.UI.Services
             string profilePath = Path.Combine(baseDir, $"worker_{wid}");
             Directory.CreateDirectory(profilePath);
 
+            // Copy extension into worker profile directory for guaranteed local loading
+            string workerExt = Path.Combine(profilePath, "extension");
+            try
+            {
+                if (Directory.Exists(extDir))
+                {
+                    if (Directory.Exists(workerExt)) Directory.Delete(workerExt, true);
+                    Directory.CreateDirectory(workerExt);
+                    foreach (var file in Directory.GetFiles(extDir))
+                    {
+                        File.Copy(file, Path.Combine(workerExt, Path.GetFileName(file)), true);
+                    }
+                    extDir = workerExt;
+                }
+            }
+            catch { }
+
             string targetUrl = string.IsNullOrEmpty(url)
                 ? $"https://passport.thehof.gg/hall-of-fame-web/login#wid={wid}"
                 : url;
@@ -161,12 +178,12 @@ namespace ApibotWarZ.UI.Services
             int x = ((wid - 1) % 4) * 460 + 10;
             int y = (((wid - 1) / 4) % 2) * 50 + 10;
 
-            // Direct Chrome launch into Default profile - bypasses any profile picker 100%
+            // Direct Chrome launch with unpacked extension forced active
             var psi = new ProcessStartInfo
             {
                 FileName = chromeExe,
                 UseShellExecute = false,
-                Arguments = $"--user-data-dir=\"{profilePath}\" --profile-directory=\"Default\" --no-profile-picker --load-extension=\"{extDir}\" --window-position={x},{y} --window-size=800,720 --no-first-run --no-default-browser-check \"{targetUrl}\""
+                Arguments = $"--user-data-dir=\"{profilePath}\" --profile-directory=\"Default\" --no-profile-picker --load-extension=\"{extDir}\" --disable-extensions-except=\"{extDir}\" --window-position={x},{y} --window-size=800,720 --no-first-run --no-default-browser-check \"{targetUrl}\""
             };
 
             try
