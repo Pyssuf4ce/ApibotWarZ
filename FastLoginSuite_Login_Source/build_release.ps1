@@ -86,6 +86,8 @@ if (-not (Test-Path $distDir)) { New-Item -ItemType Directory -Path $distDir -Fo
 
 # Clean sensitive & temporary files
 if (Test-Path "$distDir\profiles") { Remove-Item "$distDir\profiles" -Recurse -Force }
+if (Test-Path "$distDir\win-x64") { Remove-Item "$distDir\win-x64" -Recurse -Force }
+if (Test-Path "$distDir\obfuscar.xml") { Remove-Item "$distDir\obfuscar.xml" -Force }
 if (Test-Path "$distDir\tokens.json") { Remove-Item "$distDir\tokens.json" -Force }
 if (Test-Path "$distDir\config.json") { Remove-Item "$distDir\config.json" -Force }
 if (Test-Path "$distDir\accounts_state.json") { Remove-Item "$distDir\accounts_state.json" -Force }
@@ -96,6 +98,7 @@ Get-ChildItem -Path $distDir -Filter "accounts*.txt" | Remove-Item -Force
 Get-ChildItem -Path $distDir -Filter "*.pdb" -Recurse | Remove-Item -Force
 Get-ChildItem -Path $distDir -Filter "*.log" | Remove-Item -Force
 Get-ChildItem -Path $distDir -Filter "*.zip" | Remove-Item -Force
+if (Test-Path "$distDir\extension\cf_clicker.js") { Remove-Item "$distDir\extension\cf_clicker.js" -Force }
 
 # Copy runtime binaries
 $binDir = "UI\bin\Release\net10.0-windows10.0.19041.0"
