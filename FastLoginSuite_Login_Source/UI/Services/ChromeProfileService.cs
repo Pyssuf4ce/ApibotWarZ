@@ -94,10 +94,11 @@ namespace ApibotWarZ.UI.Services
             try
             {
                 string baseDir = GetBotProfilesBaseDir();
+                string extDir = GetExtensionPath();
+
                 for (int i = 1; i <= count; i++)
                 {
-                    string profDir = Path.Combine(baseDir, $"worker_{i}");
-                    Directory.CreateDirectory(profDir);
+                    InitializeWorkerSession(i, baseDir, extDir);
                 }
                 return true;
             }
@@ -106,6 +107,101 @@ namespace ApibotWarZ.UI.Services
                 Debug.WriteLine($"Error creating bot profiles: {ex.Message}");
                 return false;
             }
+        }
+
+        public static string InitializeWorkerSession(int wid, string baseDir, string extDir)
+        {
+            string profilePath = Path.Combine(baseDir, $"worker_{wid}");
+            string defaultDir = Path.Combine(profilePath, "Default");
+            string workerExt = Path.Combine(profilePath, "extension");
+
+            Directory.CreateDirectory(profilePath);
+            Directory.CreateDirectory(defaultDir);
+            Directory.CreateDirectory(workerExt);
+
+            // 1. Skip First Run
+            string firstRunFile = Path.Combine(profilePath, "First Run");
+            if (!File.Exists(firstRunFile))
+            {
+                try { File.WriteAllText(firstRunFile, ""); } catch { }
+            }
+
+            // 2. Copy extension files into worker profile
+            try
+            {
+                if (Directory.Exists(extDir))
+                {
+                    foreach (var file in Directory.GetFiles(extDir))
+                    {
+                        File.Copy(file, Path.Combine(workerExt, Path.GetFileName(file)), true);
+                    }
+                }
+            }
+            catch { }
+
+            // 3. Pre-configure Preferences (Dev Mode ON, no first run popups, clean session)
+            string prefFile = Path.Combine(defaultDir, "Preferences");
+            try
+            {
+                var prefs = new JsonObject();
+                if (File.Exists(prefFile))
+                {
+                    try
+                    {
+                        var text = File.ReadAllText(prefFile);
+                        var node = JsonNode.Parse(text);
+                        if (node is JsonObject jo) prefs = jo;
+                    }
+                    catch { }
+                }
+
+                if (!prefs.ContainsKey("extensions")) prefs["extensions"] = new JsonObject();
+                var extObj = prefs["extensions"] as JsonObject ?? new JsonObject();
+                if (!extObj.ContainsKey("ui")) extObj["ui"] = new JsonObject();
+                var uiObj = extObj["ui"] as JsonObject ?? new JsonObject();
+                uiObj["developer_mode"] = true;
+                extObj["ui"] = uiObj;
+                prefs["extensions"] = extObj;
+
+                prefs["credentials_enable_service"] = false;
+
+                if (!prefs.ContainsKey("profile")) prefs["profile"] = new JsonObject();
+                var profObj = prefs["profile"] as JsonObject ?? new JsonObject();
+                profObj["password_manager_enabled"] = false;
+                profObj["exit_type"] = "Normal";
+                profObj["exited_cleanly"] = true;
+                prefs["profile"] = profObj;
+
+                if (!prefs.ContainsKey("browser")) prefs["browser"] = new JsonObject();
+                var brObj = prefs["browser"] as JsonObject ?? new JsonObject();
+                brObj["has_seen_welcome_page"] = true;
+                brObj["check_default_browser"] = false;
+                prefs["browser"] = brObj;
+
+                File.WriteAllText(prefFile, prefs.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            }
+            catch { }
+
+            // 4. Pre-configure Local State
+            string localStateFile = Path.Combine(profilePath, "Local State");
+            if (!File.Exists(localStateFile))
+            {
+                try
+                {
+                    var ls = new JsonObject
+                    {
+                        ["browser"] = new JsonObject
+                        {
+                            ["has_seen_welcome_page"] = true,
+                            ["enabled_labs_experiments"] = new JsonArray()
+                        }
+                    };
+                    File.WriteAllText(localStateFile, ls.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+                }
+                catch { }
+            }
+
+            return workerExt;
         }
 
         public static bool DeleteBotProfiles()
@@ -152,24 +248,9 @@ namespace ApibotWarZ.UI.Services
             string extDir = GetExtensionPath();
             string baseDir = GetBotProfilesBaseDir();
             string profilePath = Path.Combine(baseDir, $"worker_{wid}");
-            Directory.CreateDirectory(profilePath);
 
-            // Copy extension into worker profile directory for guaranteed local loading
-            string workerExt = Path.Combine(profilePath, "extension");
-            try
-            {
-                if (Directory.Exists(extDir))
-                {
-                    if (Directory.Exists(workerExt)) Directory.Delete(workerExt, true);
-                    Directory.CreateDirectory(workerExt);
-                    foreach (var file in Directory.GetFiles(extDir))
-                    {
-                        File.Copy(file, Path.Combine(workerExt, Path.GetFileName(file)), true);
-                    }
-                    extDir = workerExt;
-                }
-            }
-            catch { }
+            // Ensure real session and extension files exist
+            string workerExt = InitializeWorkerSession(wid, baseDir, extDir);
 
             string targetUrl = string.IsNullOrEmpty(url)
                 ? $"https://passport.thehof.gg/hall-of-fame-web/login#wid={wid}"
@@ -183,7 +264,7 @@ namespace ApibotWarZ.UI.Services
             {
                 FileName = chromeExe,
                 UseShellExecute = false,
-                Arguments = $"--user-data-dir=\"{profilePath}\" --profile-directory=\"Default\" --no-profile-picker --load-extension=\"{extDir}\" --disable-extensions-except=\"{extDir}\" --window-position={x},{y} --window-size=800,720 --no-first-run --no-default-browser-check \"{targetUrl}\""
+                Arguments = $"--user-data-dir=\"{profilePath}\" --profile-directory=\"Default\" --no-profile-picker --load-extension=\"{workerExt}\" --disable-extensions-except=\"{workerExt}\" --window-position={x},{y} --window-size=800,720 --no-first-run --no-default-browser-check \"{targetUrl}\""
             };
 
             try

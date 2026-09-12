@@ -199,6 +199,79 @@ def close_stale_bot_chromes():
     except Exception:
         pass
 
+def initialize_profile_session(profile_path: str, wid: int) -> str:
+    """Creates a real, fully persistent Chrome session profile with pre-configured settings & extension."""
+    os.makedirs(profile_path, exist_ok=True)
+    default_dir = os.path.join(profile_path, "Default")
+    os.makedirs(default_dir, exist_ok=True)
+    
+    # 1. Skip First Run & Welcome
+    first_run_file = os.path.join(profile_path, "First Run")
+    if not os.path.exists(first_run_file):
+        try:
+            with open(first_run_file, "w", encoding="utf-8") as f:
+                f.write("")
+        except Exception:
+            pass
+
+    # 2. Extract & verify Extension files inside the worker profile
+    worker_ext_dir = os.path.join(profile_path, "extension")
+    load_ext_path = ensure_extension_files(worker_ext_dir)
+
+    # 3. Pre-configure Preferences (Dev Mode ON, no popups, clean session)
+    pref_file = os.path.join(default_dir, "Preferences")
+    try:
+        prefs = {}
+        if os.path.exists(pref_file):
+            try:
+                with open(pref_file, "r", encoding="utf-8") as f:
+                    prefs = json.load(f)
+            except Exception:
+                prefs = {}
+        
+        # Ensure developer mode is ON
+        if "extensions" not in prefs or not isinstance(prefs["extensions"], dict):
+            prefs["extensions"] = {}
+        if "ui" not in prefs["extensions"] or not isinstance(prefs["extensions"]["ui"], dict):
+            prefs["extensions"]["ui"] = {}
+        prefs["extensions"]["ui"]["developer_mode"] = True
+        
+        # Suppress prompts and clean exit
+        prefs["credentials_enable_service"] = False
+        if "profile" not in prefs or not isinstance(prefs["profile"], dict):
+            prefs["profile"] = {}
+        prefs["profile"]["password_manager_enabled"] = False
+        prefs["profile"]["exit_type"] = "Normal"
+        prefs["profile"]["exited_cleanly"] = True
+        
+        if "browser" not in prefs or not isinstance(prefs["browser"], dict):
+            prefs["browser"] = {}
+        prefs["browser"]["has_seen_welcome_page"] = True
+        prefs["browser"]["check_default_browser"] = False
+
+        with open(pref_file, "w", encoding="utf-8") as f:
+            json.dump(prefs, f, indent=2)
+    except Exception:
+        pass
+
+    # 4. Pre-configure Local State
+    local_state_file = os.path.join(profile_path, "Local State")
+    if not os.path.exists(local_state_file):
+        try:
+            local_state = {
+                "browser": {
+                    "has_seen_welcome_page": True,
+                    "enabled_labs_experiments": []
+                }
+            }
+            with open(local_state_file, "w", encoding="utf-8") as f:
+                json.dump(local_state, f, indent=2)
+        except Exception:
+            pass
+
+    return load_ext_path
+
+
 def launch_chrome_worker(wid: int):
     with worker_processes_lock:
         proc = worker_processes.get(wid)
@@ -208,10 +281,12 @@ def launch_chrome_worker(wid: int):
         chrome_exe = find_chrome_binary()
         bot_profiles_dir = get_bot_profiles_dir()
         profile_path = os.path.join(bot_profiles_dir, f"worker_{wid}")
-        os.makedirs(profile_path, exist_ok=True)
+        
+        # Create/ensure real persistent Chrome session with Extension
+        load_ext_path = initialize_profile_session(profile_path, wid)
+        print(f"🌟 [Worker-{wid}] เปิด Chrome Bot Profile (Real Session): worker_{wid}", flush=True)
 
         user_data_arg = f"--user-data-dir={profile_path}"
-        print(f"🌟 [Worker-{wid}] เปิด Chrome Bot Profile: worker_{wid}", flush=True)
 
         # Position windows neatly across screen in 5x4 grid for 20 workers
         col = (wid - 1) % 5
@@ -221,20 +296,7 @@ def launch_chrome_worker(wid: int):
 
         init_url = f"https://passport.thehof.gg/hall-of-fame-web/login#wid={wid}"
 
-        # Guarantee extension is extracted & ready in worker profile
-        worker_ext_dir = os.path.join(profile_path, "extension")
-        try:
-            load_ext_path = ensure_extension_files(worker_ext_dir)
-            if os.path.exists(os.path.join(worker_ext_dir, "manifest.json")):
-                print(f"✅ [Worker-{wid}] Extension Ready (Auto-Extracted) → {load_ext_path}", flush=True)
-            else:
-                print(f"⚠️ [Worker-{wid}] Manifest missing in {worker_ext_dir}", flush=True)
-        except Exception as ex:
-            print(f"⚠️ [Worker-{wid}] Extension setup error: {ex}", flush=True)
-            load_ext_path = EXTENSION_DIR
-
         # Pure Chrome flags matching natural human browser launch 100%
-        # Removed all automation-revealing flags (--disable-extensions-except, --silent-debugger, --renderer-process-limit, etc.)
         cmd = [
             chrome_exe,
             user_data_arg,
