@@ -47,6 +47,21 @@ type LoginResponse struct {
 	IsLimit      bool   `json:"is_limit,omitempty"`
 }
 
+type DirectRedeemReq struct {
+	Username string `json:"username"`
+	EventID  string `json:"event_id,omitempty"`
+}
+
+type DirectRedeemResp struct {
+	Status       string `json:"status"`
+	Username     string `json:"username"`
+	RedeemStatus string `json:"redeem_status,omitempty"`
+	Items        string `json:"items,omitempty"`
+	Detail       string `json:"detail,omitempty"`
+	Message      string `json:"message,omitempty"`
+	TimeMS       int    `json:"time_ms,omitempty"`
+}
+
 type LoginResult struct {
 	Success    bool
 	IsLimit    bool
@@ -89,6 +104,99 @@ func waitForServerConnection() {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+}
+
+func checkCachedToken(username string) (bool, string, string) {
+	client := &http.Client{Timeout: 8 * time.Second}
+	reqBody := DirectRedeemReq{Username: username}
+	jsonBytes, _ := json.Marshal(reqBody)
+
+	resp, err := client.Post("http://127.0.0.1:5000/direct_redeem", "application/json", bytes.NewBuffer(jsonBytes))
+	if err != nil {
+		return false, "", ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return false, "", ""
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	var res DirectRedeemResp
+	json.Unmarshal(body, &res)
+
+	if res.Status == "success" {
+		elapsedStr := fmt.Sprintf("%.2fs", float64(res.TimeMS)/1000.0)
+		if res.TimeMS == 0 {
+			elapsedStr = "0.1s"
+		}
+		detail := res.Detail
+		if res.RedeemStatus == "success" {
+			detail = fmt.Sprintf("🎁 รับรางวัลสำเร็จ: %s", res.Items)
+		} else if res.RedeemStatus == "already_claimed" {
+			detail = "🟡 รับรางวัลไปแล้วก่อนหน้า"
+		}
+		return true, elapsedStr, detail
+	}
+
+	return false, "", ""
+}
+
+func runCachedTokensPass() int {
+	accountLock.Lock()
+	total := len(allAccounts)
+	accountLock.Unlock()
+
+	if total == 0 {
+		return 0
+	}
+
+	fmt.Printf("\n⚡ [Phase 1: Session Cache Check] กำลังตรวจสอบ Session Token ในคลัง เพื่อข้ามการเปิดเบราว์เซอร์...\n")
+
+	cachedSuccessCount := 0
+	var wg sync.WaitGroup
+	concurrency := 10
+	if MaxConcurrent > 10 {
+		concurrency = MaxConcurrent
+	}
+	sem := make(chan struct{}, concurrency)
+
+	for _, acc := range allAccounts {
+		accountLock.Lock()
+		if processedMap[acc.Username] {
+			accountLock.Unlock()
+			continue
+		}
+		accountLock.Unlock()
+
+		wg.Add(1)
+		go func(targetAcc Account) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			ok, elapsedStr, detail := checkCachedToken(targetAcc.Username)
+			if ok {
+				accountLock.Lock()
+				processedMap[targetAcc.Username] = true
+				cachedSuccessCount++
+				accountLock.Unlock()
+
+				fmt.Printf("⚡ [Session Cache] 🎉 [%s] พบ Token เดิม! รับรางวัลสำเร็จทันที (%s) ➔ %s [0s Browser]\n", targetAcc.Username, elapsedStr, detail)
+				fmt.Printf("[ACC_SUCCESS] %s|%s|%s\n", targetAcc.Username, elapsedStr, detail)
+			}
+		}(acc)
+	}
+
+	wg.Wait()
+
+	if cachedSuccessCount > 0 {
+		fmt.Printf("✅ [Session Cache] เคลียร์บัญชีผ่าน Session Token ในคลังสำเร็จทั้งหมด %d บัญชี โดยไม่ต้องเปิด Chrome!\n", cachedSuccessCount)
+	} else {
+		fmt.Printf("ℹ️ [Session Cache] ไม่พบบัญชีที่มี Token หรือ Token หมดอายุ ➔ เข้าสู่ระบบเปิด Chrome เพื่อขอ Token ใหม่\n")
+	}
+
+	return cachedSuccessCount
 }
 
 func prepareBatchOnServer(count int, batchNum int, totalBatches int) bool {
@@ -136,7 +244,7 @@ func doLoginRequest(workerID int, acc Account) LoginResult {
 	fmt.Printf("[Bot-%d] 🔓 กำลังเข้าสู่ระบบและตรวจสอบรางวัลสำหรับ '%s'...\n", workerID, acc.Username)
 	fmt.Printf("[ACC_RUNNING] %s\n", acc.Username)
 
-	client := &http.Client{Timeout: 90 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second}
 	reqBody := LoginRequest{
 		URL:      TargetURL,
 		Username: acc.Username,
@@ -246,7 +354,10 @@ func main() {
 		return
 	}
 
-	// 3. เริ่มรันระบบรอบ (Batch-by-Batch)
+	// 3. Phase 1: ตรวจสอบและยิงตรงผ่าน Session Token เดิมที่มีอยู่ในคลัง (Zero-Browser Mode 0s)
+	runCachedTokensPass()
+
+	// 4. Phase 2: รันระบบรอบ Chrome สำหรับบัญชีที่ยังไม่มี Token หรือ Token หมดอายุ
 	runBatchEngine()
 
 	fmt.Printf("\n[ALL_COMPLETED] 🎉 ดำเนินการเข้าสู่ระบบเสร็จสิ้นครบทุกบัญชีแล้ว!\n")

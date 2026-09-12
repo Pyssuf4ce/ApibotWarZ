@@ -568,6 +568,45 @@ def get_worker_status(wid: int):
     return {"wid": wid, "alive": alive, "has_task": has_task}
 
 # ─── Bot & UI Endpoints ───
+class DirectRedeemRequest(BaseModel):
+    username: str
+    event_id: str = DEFAULT_EVENT_ID
+
+@app.post("/direct_redeem")
+def api_direct_redeem(req: DirectRedeemRequest):
+    tokens = get_all_tokens()
+    entry = tokens.get(req.username)
+    if not entry or not isinstance(entry, dict) or "token" not in entry:
+        return {"status": "no_cache", "message": "No cached token"}
+    
+    token = entry["token"]
+    res = redeem_single_account(req.username, token, req.event_id)
+    if res.get("status") in ("success", "already_claimed"):
+        return {
+            "status": "success",
+            "username": req.username,
+            "redeem_status": res.get("status"),
+            "items": res.get("items", ""),
+            "detail": "รับรางวัลสำเร็จ" if res.get("status") == "success" else "เคยรับรางวัลไปแล้ว",
+            "time_ms": res.get("time_ms", 0)
+        }
+    elif res.get("status") in ("failed", "error") and any(w in res.get("message", "").lower() for w in ["token", "unauthorized", "expired", "jwt", "401"]):
+        # Token expired -> remove from cache
+        with tokens_lock:
+            try:
+                if os.path.exists(TOKENS_FILE):
+                    with open(TOKENS_FILE, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    if req.username in data:
+                        del data[req.username]
+                        with open(TOKENS_FILE, "w", encoding="utf-8") as f:
+                            json.dump(data, f, indent=2, ensure_ascii=False)
+            except Exception:
+                pass
+        return {"status": "expired", "message": "Token expired"}
+    else:
+        return {"status": res.get("status", "failed"), "message": res.get("message", "")}
+
 class PrepareBatchRequest(BaseModel):
     count: int
     batch_num: int = 1
