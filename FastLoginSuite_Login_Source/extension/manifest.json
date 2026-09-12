@@ -17,6 +17,9 @@
     "https://challenges.cloudflare.com/*",
     "http://127.0.0.1:5000/*"
   ],
+  "action": {
+    "default_title": "HOF FastLogin Extension"
+  },
   "background": {
     "service_worker": "background.js"
   },
