@@ -1,0 +1,24 @@
+<?xml version='1.0'?>
+<Obfuscator>
+  <Var name="InPath" value="." />
+  <Var name="OutPath" value=".\Obfuscated" />
+  <Var name="KeepPublicApi" value="false" />
+  <Var name="HidePrivateApi" value="true" />
+  <Var name="RenameProperties" value="false" />
+  <Var name="RenameEvents" value="true" />
+  <Var name="RenameFields" value="true" />
+  <Var name="RenameMethods" value="true" />
+  <Var name="RenameParameters" value="false" />
+  <Var name="UseUnicodeNames" value="true" />
+  <Var name="HideStrings" value="true" />
+  <Var name="OptimizeMethods" value="true" />
+  <Var name="SuppressIldasm" value="true" />
+
+  <Module file="$(InPath)\FastLogin.Launcher.dll">
+    <!-- Preserve Entry Point and Data Models -->
+    <SkipMethod type="ApibotWarZ.UI.Program" name="Main" />
+    <SkipType name="ApibotWarZ.UI.Models.RegisteredAccount" skipProperties="true" skipFields="true" />
+    <SkipType name="ApibotWarZ.UI.Models.AppConfig" skipProperties="true" skipFields="true" />
+    <SkipType name="ApibotWarZ.UI.Services.AutoUpdater+UpdateInfo" skipProperties="true" skipFields="true" />
+  </Module>
+</Obfuscator>

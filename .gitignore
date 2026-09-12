@@ -1,13 +1,17 @@
-﻿# Visual Studio & IDE
+# Visual Studio & IDE
 .vs/
 *.user
 *.suo
 
 # Build outputs
+**/bin/
+**/obj/
 UI/bin/
 UI/obj/
 ApibotWarZ_Release/
 Launcher_Dist/
+Dist_ApibotWarZ/
+Dist_FastLoginSuite/
 ApibotWarZ.Launcher.deps.json
 ApibotWarZ.Launcher.dll
 ApibotWarZ.Launcher.exe
@@ -19,7 +23,26 @@ WinRT.Runtime.dll
 # Release archives
 *.zip
 
+# Sensitive & Account Data
+**/accounts*.txt
+**/tokens.json
+**/accounts_state.json
+**/accounts_queue.txt
+
 # Temporary VPN files and logs
 vpn_*.ovpn
-openvpn.log
+*.log
+**/*.log
 blocked_ips.json
+
+# PyInstaller & Python cache
+build/
+dist/
+**/build/
+**/dist/
+**/__pycache__/
+*.pyc
+*.pdb
+
+# Browser profiles
+**/profiles/

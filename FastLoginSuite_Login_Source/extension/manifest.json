@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "HOF FastLogin Extension",
+  "version": "1.0.0",
+  "description": "Automated Native Login and Token Sync Extension for FastLogin Suite",
+  "permissions": [
+    "cookies",
+    "storage",
+    "tabs",
+    "debugger",
+    "browsingData"
+  ],
+  "host_permissions": [
+    "https://passport.thehof.gg/*",
+    "https://member.thehof.gg/*",
+    "https://core-api.thehof.gg/*",
+    "https://challenges.cloudflare.com/*",
+    "http://127.0.0.1:5000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://passport.thehof.gg/*",
+        "https://member.thehof.gg/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://challenges.cloudflare.com/*"
+      ],
+      "js": ["cf_clicker.js"],
+      "all_frames": true,
+      "run_at": "document_end"
+    }
+  ]
+}

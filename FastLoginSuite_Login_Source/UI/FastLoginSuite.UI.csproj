@@ -1,0 +1,32 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>FastLogin.Launcher</AssemblyName>
+    <RootNamespace>ApibotWarZ.UI</RootNamespace>
+    <Version>2.1.1</Version>
+    <NoWarn>$(NoWarn);WFO1000</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Obfuscar" Version="2.2.38" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="obfuscar.xml">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <Target Name="ObfuscateRelease" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+    <Exec Command="&quot;$(Obfuscar)&quot; &quot;$(TargetDir)obfuscar.xml&quot;" WorkingDirectory="$(TargetDir)" />
+    <Copy SourceFiles="$(TargetDir)Obfuscated\$(TargetFileName)" DestinationFolder="$(TargetDir)" OverwriteReadOnlyFiles="true" />
+    <RemoveDir Directories="$(TargetDir)Obfuscated" />
+  </Target>
+
+</Project>
