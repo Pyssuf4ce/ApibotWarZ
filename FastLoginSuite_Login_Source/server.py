@@ -451,10 +451,10 @@ def api_acquire_submit(wid: int):
     with submit_lock:
         now = time.time()
         diff = now - last_submit_time
-        if diff < 1.5:
-            time.sleep(1.5 - diff)
+        if diff < 2.0:
+            time.sleep(2.0 - diff)
         last_submit_time = time.time()
-        print(f"🚦 [Worker-{wid}] ได้รับสิทธิ์กดเข้าสู่ระบบ (Pacing Submit 1.5s ป้องกัน 429/1015)", flush=True)
+        print(f"🚦 [Worker-{wid}] ได้รับสิทธิ์กดเข้าสู่ระบบ (Pacing Submit 2.0s ป้องกัน 429/1015)", flush=True)
         return {"status": "ok", "wid": wid}
 
 @app.get("/worker/{wid}/status")
@@ -478,7 +478,7 @@ def api_prepare_batch(req: PrepareBatchRequest):
     for i in range(1, limit + 1):
         launch_chrome_worker(i)
         if i < limit:
-            time.sleep(0.8)  # เว้น 0.8s ระหว่างจอ ป้องกัน Cloudflare 1015 จาก burst page load
+            time.sleep(1.0)  # เว้น 1.0s ระหว่างจอ ป้องกัน Cloudflare 1015 จาก burst page load
     
     # พักให้ Turnstile ด่านแรกในแต่ละจอผ่านอัตโนมัติ
     time.sleep(2.0)
@@ -614,8 +614,8 @@ def do_login(req: LoginRequest):
                 print(f"🛑 [Req-{req_id}] บัญชี '{req.username}' [Worker-{assigned_wid}] ติด Cloudflare 1015 — รอคูลดาวน์ 10s", flush=True)
                 time.sleep(10)
             elif is_429:
-                print(f"⏳ [Req-{req_id}] บัญชี '{req.username}' [Worker-{assigned_wid}] ติด Too Many Requests (429) — พักสั้นๆ 3s แล้วทำรายการต่อทันที", flush=True)
-                time.sleep(3)
+                print(f"⏳ [Req-{req_id}] บัญชี '{req.username}' [Worker-{assigned_wid}] ติด Too Many Requests (429) — พัก 10s ให้ Cloudflare คลายบล็อก IP", flush=True)
+                time.sleep(10)
 
             if status == "success":
                 if token:

@@ -343,15 +343,13 @@
   function checkIfRateLimited() {
     const title = (document.title || "").toLowerCase();
     const text = (document.body ? document.body.innerText : "").toLowerCase();
-    return (
-      title.includes("too many requests") || 
-      title.includes("429") || 
-      text.includes("too many requests") || 
-      text.includes("429") || 
-      text.includes("1015") || 
-      text.includes("rate limited") ||
-      text.includes("rate limit")
-    );
+    if (title.includes("too many requests") || title.includes("error 1015") || title.includes("rate limited") || title.includes("429")) {
+      return true;
+    }
+    if (text.includes("too many requests") || text.includes("error 1015") || text.includes("you are being rate limited") || text.includes("429 too many requests") || text.includes("rate limit exceeded")) {
+      return true;
+    }
+    return false;
   }
 
   // If already rate limited upon page load
