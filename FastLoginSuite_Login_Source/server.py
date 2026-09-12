@@ -300,10 +300,8 @@ def launch_chrome_worker(wid: int):
         cmd = [
             chrome_exe,
             user_data_arg,
-            "--profile-directory=Default",
             "--no-profile-picker",
             f"--load-extension={load_ext_path}",
-            f"--disable-extensions-except={load_ext_path}",
             f"--window-position={x},{y}",
             "--window-size=460,400",
             "--no-first-run",

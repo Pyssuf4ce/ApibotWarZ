@@ -259,12 +259,12 @@ namespace ApibotWarZ.UI.Services
             int x = ((wid - 1) % 4) * 460 + 10;
             int y = (((wid - 1) / 4) % 2) * 50 + 10;
 
-            // Direct Chrome launch with unpacked extension forced active
+            // Direct Chrome launch with unpacked extension loaded cleanly like normal Chrome
             var psi = new ProcessStartInfo
             {
                 FileName = chromeExe,
                 UseShellExecute = false,
-                Arguments = $"--user-data-dir=\"{profilePath}\" --profile-directory=\"Default\" --no-profile-picker --load-extension=\"{workerExt}\" --disable-extensions-except=\"{workerExt}\" --window-position={x},{y} --window-size=800,720 --no-first-run --no-default-browser-check \"{targetUrl}\""
+                Arguments = $"--user-data-dir=\"{profilePath}\" --no-profile-picker --load-extension=\"{workerExt}\" --window-position={x},{y} --window-size=800,720 --no-first-run --no-default-browser-check \"{targetUrl}\""
             };
 
             try
