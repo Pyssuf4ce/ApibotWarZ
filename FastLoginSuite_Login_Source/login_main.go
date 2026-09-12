@@ -336,13 +336,21 @@ func loadAccounts(filePath string) {
 func runBatchEngine() {
 	for {
 		accountLock.Lock()
-		var pending []Account
+		var retryQueue []Account
+		var freshQueue []Account
 		for _, acc := range allAccounts {
 			if !processedMap[acc.Username] {
-				pending = append(pending, acc)
+				if limitCountMap[acc.Username] > 0 || retryCountMap[acc.Username] > 0 {
+					retryQueue = append(retryQueue, acc)
+				} else {
+					freshQueue = append(freshQueue, acc)
+				}
 			}
 		}
 		accountLock.Unlock()
+
+		// Prioritize retryQueue first before freshQueue
+		pending := append(retryQueue, freshQueue...)
 
 		if len(pending) == 0 {
 			break
@@ -352,6 +360,9 @@ func runBatchEngine() {
 		batchSize := MaxConcurrent
 		totalBatches := (totalPending + batchSize - 1) / batchSize
 
+		if len(retryQueue) > 0 {
+			fmt.Printf("⚡ [Priority Queue] นำไอดีรอรันซ้ำ %d บัญชี มาดำเนินการก่อนเป็นลำดับแรก\n", len(retryQueue))
+		}
 		fmt.Printf("\n📋 มีบัญชีรอเข้าสู่ระบบ %d บัญชี (แบ่งเป็น %d รอบ, รอบละ %d จอ)\n", totalPending, totalBatches, batchSize)
 
 		for bIdx := 0; bIdx < totalBatches; bIdx++ {
