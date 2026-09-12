@@ -84,6 +84,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             x: cx,
             y: cy,
             button: "left",
+            buttons: 1,
             clickCount: 1
           }, () => {
             setTimeout(() => {
@@ -93,6 +94,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 x: cx,
                 y: cy,
                 button: "left",
+                buttons: 0,
                 clickCount: 1
               }, () => {
                 sendResponse({ success: true });

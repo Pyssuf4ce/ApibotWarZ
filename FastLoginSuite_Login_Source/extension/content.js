@@ -412,17 +412,16 @@
       break;
     }
 
-    // Give Turnstile 6.0 seconds to auto-solve naturally without any interference.
-    // Only if stuck after 6.0s (interactive checkbox challenge), attempt a gentle CDP click once every 4.0s (16 steps).
-    if (step >= 24 && (step - 24) % 16 === 0) {
-      console.log(`[FastLogin] 🖱️ Turnstile ไม่ผ่านอัตโนมัติ กำลังกระตุ้นคลิกด้วย CDP Event...`);
-      showHUD(`🖱️ กำลังกระตุ้นคลิกยืนยัน Turnstile...`, "#8b5cf6");
+    // If Turnstile is an interactive checkbox challenge, auto-click checkbox starting at 1.0s, repeat every 1.5s
+    if (step >= 4 && (step - 4) % 6 === 0) {
+      console.log(`[FastLogin] 🖱️ กำลังส่งคำสั่งคลิกกล่อง Turnstile (CDP Event)...`);
+      showHUD(`🖱️ กำลังคลิกยืนยัน Turnstile อัตโนมัติ...`, "#8b5cf6");
       try {
-        const iframes = document.querySelectorAll('iframe[src*="cloudflare"], iframe[src*="challenges"], iframe[src*="turnstile"]');
+        const iframes = document.querySelectorAll('iframe[src*="cloudflare"], iframe[src*="challenges"], iframe[src*="turnstile"], iframe');
         for (const ifr of iframes) {
           const rect = ifr.getBoundingClientRect();
-          if (rect.width > 0 && rect.height > 0) {
-            const clickX = rect.left + 32;
+          if (rect.width > 20 && rect.height > 20) {
+            const clickX = rect.left + Math.min(32, rect.width / 4);
             const clickY = rect.top + (rect.height / 2);
             chrome.runtime.sendMessage({
               type: "CDP_CLICK",
