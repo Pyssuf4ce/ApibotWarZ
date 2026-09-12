@@ -161,12 +161,12 @@ namespace ApibotWarZ.UI.Services
             int x = ((wid - 1) % 4) * 460 + 10;
             int y = (((wid - 1) / 4) % 2) * 50 + 10;
 
-            // Direct Chrome launch into Default profile - bypasses any profile picker
+            // Direct Chrome launch into Default profile - bypasses any profile picker 100%
             var psi = new ProcessStartInfo
             {
                 FileName = chromeExe,
                 UseShellExecute = false,
-                Arguments = $"--user-data-dir=\"{profilePath}\" --profile-directory=\"Default\" --load-extension=\"{extDir}\" --window-position={x},{y} --window-size=800,720 --no-first-run --no-default-browser-check \"{targetUrl}\""
+                Arguments = $"--user-data-dir=\"{profilePath}\" --profile-directory=\"Default\" --no-profile-picker --load-extension=\"{extDir}\" --window-position={x},{y} --window-size=800,720 --no-first-run --no-default-browser-check \"{targetUrl}\""
             };
 
             try
