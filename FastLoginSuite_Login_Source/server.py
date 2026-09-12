@@ -168,22 +168,6 @@ def launch_chrome_worker(wid: int):
 
         init_url = f"https://passport.thehof.gg/hall-of-fame-web/login#wid={wid}"
 
-        # Seed worker profile with real Chrome Local State & Variations if missing
-        try:
-            native_user_data = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
-            if os.path.exists(native_user_data):
-                import shutil
-                for seed_name in ["Local State", "Variations", "First Run"]:
-                    src_f = os.path.join(native_user_data, seed_name)
-                    dst_f = os.path.join(profile_path, seed_name)
-                    if os.path.exists(src_f) and not os.path.exists(dst_f):
-                        try:
-                            shutil.copy2(src_f, dst_f)
-                        except Exception:
-                            pass
-        except Exception:
-            pass
-
         # Copy extension into worker profile — always re-copy to guarantee freshness in VM
         import shutil
         worker_ext_dir = os.path.join(profile_path, "extension")
@@ -212,6 +196,7 @@ def launch_chrome_worker(wid: int):
         cmd = [
             chrome_exe,
             user_data_arg,
+            "--profile-directory=Default",
             f"--load-extension={load_ext_path}",
             f"--window-position={x},{y}",
             "--window-size=460,400",
