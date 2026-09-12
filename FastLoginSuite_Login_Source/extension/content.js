@@ -2,6 +2,22 @@
 (async function() {
   console.log("[FastLogin] Content script loaded on:", window.location.href);
 
+  // Floating Visual HUD for user status visibility
+  function showHUD(text, color = "#6366f1") {
+    try {
+      let hud = document.getElementById("fastlogin-hud");
+      if (!hud) {
+        hud = document.createElement("div");
+        hud.id = "fastlogin-hud";
+        hud.style.cssText = "position:fixed;top:10px;right:10px;z-index:2147483647;padding:8px 14px;background:#0f172a;color:#f8fafc;font-family:Segoe UI,sans-serif;font-size:12px;font-weight:600;border:1.5px solid " + color + ";border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.6);pointer-events:none;display:flex;align-items:center;gap:8px;";
+        if (document.body) document.body.appendChild(hud);
+        else document.documentElement.appendChild(hud);
+      }
+      hud.style.borderColor = color;
+      hud.innerHTML = `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};box-shadow:0 0 8px ${color};"></span>` + text;
+    } catch(e) {}
+  }
+
   // Robust React / Vue / Standard Input Value Setter
   function setInputValue(el, value) {
     if (!el) return false;
@@ -184,6 +200,7 @@
 
   if (isMemberPage) {
     console.log("[FastLogin] 🎉 ตรวจพบหน้า Member Portal! เริ่มการสกัดโทเคนและรับรางวัล...");
+    showHUD("🎉 ล็อกอินสำเร็จ! กำลังสกัด Token และรับรางวัล...", "#10b981");
 
     // อ่านข้อมูล Worker & Username จาก chrome.storage.local (ไม่หลุดแม้ข้ามโดเมน)
     let wid = "1";
@@ -320,6 +337,7 @@
   }
 
   console.log(`[FastLogin] 🚀 Worker ${wid} พร้อมทำงานบนหน้าล็อกอิน กำลังดึงงานจากเซิร์ฟเวอร์...`);
+  showHUD(`⚡ HOF Bot พร้อมทำงาน (Worker #${wid}) | กำลังรอรับคิวงาน...`, "#6366f1");
 
   function checkIfRateLimited() {
     const title = (document.title || "").toLowerCase();
@@ -371,6 +389,7 @@
   }
 
   console.log(`[FastLogin] 📥 ได้รับงาน: บัญชี '${currentTask.username}'. กำลังรอ Turnstile...`);
+  showHUD(`🔑 กำลังทำงาน [Worker #${wid}]: บัญชี ${currentTask.username}`, "#f59e0b");
   try {
     await chrome.storage.local.set({
       fastlogin_wid: wid,
@@ -388,6 +407,7 @@
     if (cfInput && cfInput.value && cfInput.value.length > 30) {
       turnstileSolved = true;
       console.log("[FastLogin] ✅ Cloudflare Turnstile ยืนยันสำเร็จ (มี Token)!");
+      showHUD(`🛡️ Turnstile ผ่านแล้ว! กำลังเข้าสู่ระบบ: ${currentTask.username}`, "#10b981");
       break;
     }
 
@@ -395,6 +415,7 @@
     // Only if stuck after 6.0s (interactive checkbox challenge), attempt a gentle CDP click once every 4.0s (16 steps).
     if (step >= 24 && (step - 24) % 16 === 0) {
       console.log(`[FastLogin] 🖱️ Turnstile ไม่ผ่านอัตโนมัติ กำลังกระตุ้นคลิกด้วย CDP Event...`);
+      showHUD(`🖱️ กำลังกระตุ้นคลิกยืนยัน Turnstile...`, "#8b5cf6");
       try {
         const iframes = document.querySelectorAll('iframe[src*="cloudflare"], iframe[src*="challenges"], iframe[src*="turnstile"]');
         for (const ifr of iframes) {
