@@ -417,12 +417,23 @@
       console.log(`[FastLogin] 🖱️ กำลังส่งคำสั่งคลิกกล่อง Turnstile (CDP Event)...`);
       showHUD(`🖱️ กำลังคลิกยืนยัน Turnstile อัตโนมัติ...`, "#8b5cf6");
       try {
-        const iframes = document.querySelectorAll('iframe[src*="cloudflare"], iframe[src*="challenges"], iframe[src*="turnstile"], iframe');
+        const iframes = document.querySelectorAll('iframe[src*="cloudflare"], iframe[src*="challenges"], iframe[src*="turnstile"], .cf-turnstile iframe, iframe');
         for (const ifr of iframes) {
           const rect = ifr.getBoundingClientRect();
-          if (rect.width > 20 && rect.height > 20) {
-            const clickX = rect.left + Math.min(32, rect.width / 4);
-            const clickY = rect.top + (rect.height / 2);
+          if (rect.width > 25 && rect.height > 25) {
+            // Checkbox in Cloudflare Turnstile iframe is located at x: ~28px, y: ~32px
+            const clickX = Math.round(rect.left + 28);
+            const clickY = Math.round(rect.top + (rect.height / 2));
+            
+            // Visual click ripple on page
+            try {
+              const dot = document.createElement("div");
+              dot.style.cssText = `position:fixed;left:${clickX - 10}px;top:${clickY - 10}px;width:20px;height:20px;border-radius:50%;background:rgba(239,68,68,0.75);border:2px solid #ffffff;z-index:2147483647;pointer-events:none;box-shadow:0 0 10px #ef4444;`;
+              document.body.appendChild(dot);
+              setTimeout(() => dot.remove(), 400);
+            } catch(e) {}
+
+            console.log(`[FastLogin] 🖱️ ส่ง CDP Click ที่พิกัด (${clickX}, ${clickY})`);
             chrome.runtime.sendMessage({
               type: "CDP_CLICK",
               x: clickX,

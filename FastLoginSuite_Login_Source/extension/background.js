@@ -107,10 +107,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     chrome.debugger.attach(target, "1.3", () => {
       const err = chrome.runtime.lastError ? chrome.runtime.lastError.message : "";
-      if (err && !err.includes("already attached")) {
-        console.warn("[FastLogin Debugger] Attach error:", err);
-        sendResponse({ success: false, error: err });
-        return;
+      if (err) {
+        console.log(`[FastLogin Debugger] Debugger attach notice: ${err}`);
       }
       console.log(`[FastLogin Debugger] 🖱️ Sending Trusted CDP Click at (${cx}, ${cy})...`);
       dispatchClickSequence();
