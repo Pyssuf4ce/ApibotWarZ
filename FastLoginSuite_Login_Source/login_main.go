@@ -461,19 +461,23 @@ func runBatchEngine() {
 			accountLock.Unlock()
 
 			// 3. จัดการคูลดาวน์และคืน RAM
-			if limitEncountered {
-				fmt.Printf("⏳ [Cool-down] มีบัญชีติด Limit 429 — พักสั้นๆ 3 วินาที เพื่อรันไอดีใหม่ต่อทันที...\n")
-				closeBatchOnServer()
-				time.Sleep(3 * time.Second)
-				break // สั่ง break ทันทีเพื่อกลับไปคิวหลัก และดึงไอดีที่ติด Limit มารันต่อทันที ไม่ข้ามไปไอดีถัดไป!
+			if limitEncountered || requeueCount > 0 {
+				if limitEncountered {
+					fmt.Printf("⏳ [Cool-down] มีบัญชีติด Limit 429 — พักสั้นๆ 3 วินาที เพื่อรันไอดีใหม่ต่อทันที...\n")
+					closeBatchOnServer()
+					time.Sleep(3 * time.Second)
+				} else {
+					fmt.Printf("🔄 [Priority Retry] มีบัญชีรอรันซ้ำ %d บัญชี — ดึงกลับมารันซ้ำทันทีในรอบถัดไป...\n", requeueCount)
+					closeBatchOnServer()
+					time.Sleep(2 * time.Second)
+				}
+				break // สั่ง break ทันทีเพื่อกลับไปคิวหลัก และดึงไอดีที่รอรันซ้ำขึ้นมาทำก่อนเป็นลำดับแรกทันที!
 			} else if (batchNum%3 == 0) || (bIdx+1 == totalBatches) {
 				fmt.Printf("🛑 [รอบที่ %d/%d] ล้างแคชรีเฟรชเบราว์เซอร์ และพักคูลดาวน์ 4s...\n", batchNum, totalBatches)
 				closeBatchOnServer()
 				time.Sleep(4 * time.Second)
 			} else {
-				if requeueCount > 0 {
-					time.Sleep(1 * time.Second)
-				} else if bIdx+1 < totalBatches {
+				if bIdx+1 < totalBatches {
 					time.Sleep(500 * time.Millisecond)
 				}
 			}
