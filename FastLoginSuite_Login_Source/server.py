@@ -582,21 +582,21 @@ def do_login(req: LoginRequest):
 
             print(f"[Req-{req_id}] 🚀 มอบหมายงานให้ Worker-{assigned_wid} แล้ว กำลังรอ Extension ดำเนินการและข้าม Turnstile...", flush=True)
 
-            # รอ Extension ทำงานเสร็จ สูงสุด 35 วินาที
-            completed = evt.wait(timeout=35.0)
+            # รอ Extension ทำงานเสร็จ สูงสุด 15 วินาที (Fast Failover)
+            completed = evt.wait(timeout=15.0)
 
             elapsed_str = f"{time.time() - t_start:.1f}s"
 
             if not completed:
-                print(f"[Req-{req_id}] ⚠️ Worker-{assigned_wid} หมดเวลาตอบกลับ (Timeout 35s)", flush=True)
+                print(f"[Req-{req_id}] ⚠️ Worker-{assigned_wid} หมดเวลาตอบกลับ (Timeout 15s) ➔ ส่งคิวรันซ้ำ", flush=True)
                 with worker_tasks_lock:
                     worker_tasks[assigned_wid] = None
                 return {
                     "status": "failed",
                     "username": req.username,
                     "time": elapsed_str,
-                    "reason": "หมดเวลาการทำงาน (Timeout 35s)",
-                    "detail": "หมดเวลาการทำงาน (Timeout 35s)",
+                    "reason": "หมดเวลาการทำงาน 15s (ส่งรันซ้ำ)",
+                    "detail": "หมดเวลาการทำงาน 15s (ส่งรันซ้ำ)",
                     "is_limit": False
                 }
 

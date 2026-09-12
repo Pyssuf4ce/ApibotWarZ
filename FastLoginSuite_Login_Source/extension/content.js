@@ -401,9 +401,9 @@
 
   const tStart = Date.now();
 
-  // Step 2: Wait for Cloudflare Turnstile to auto-pass naturally
+  // Step 2: Wait for Cloudflare Turnstile to auto-pass naturally (Fast Timeout: 6.0s)
   let turnstileSolved = false;
-  for (let step = 0; step < 120; step++) { // 120 * 250ms = 30.0s
+  for (let step = 0; step < 24; step++) { // 24 * 250ms = 6.0s
     const cfInput = document.querySelector('[name="cf-turnstile-response"]');
     if (cfInput && cfInput.value && cfInput.value.length > 30) {
       turnstileSolved = true;
@@ -412,7 +412,6 @@
       break;
     }
 
-    // Cloudflare Turnstile auto-solves naturally within 0.5s - 1.5s when no debugger/synthetic events interfere
     if (step === 0 || step === 8) {
       showHUD(`🛡️ กำลังรอ Cloudflare Turnstile ยืนยันอัตโนมัติ...`, "#8b5cf6");
     }
@@ -433,12 +432,13 @@
   }
 
   if (!turnstileSolved) {
-    console.warn("[FastLogin] ⚠️ Turnstile timeout");
+    console.warn("[FastLogin] ⚠️ Turnstile ไม่ผ่านใน 6s ➔ ส่งรันซ้ำทันที");
+    showHUD(`🔄 Turnstile ไม่ผ่านใน 6s ➔ นำกลับไปรันซ้ำรอบหน้า`, "#f59e0b");
     await sendWorkerDone(wid, {
       status: "failed",
       worker_id: parseInt(wid, 10),
       username: currentTask.username,
-      reason: "Cloudflare Turnstile หมดเวลาหรือไม่ผ่าน",
+      reason: "Cloudflare Turnstile หมดเวลา (ส่งรันซ้ำ)",
       time: `${((Date.now() - tStart) / 1000).toFixed(1)}s`
     });
     location.reload();
