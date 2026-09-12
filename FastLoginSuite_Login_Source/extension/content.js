@@ -373,7 +373,7 @@
 
   const tStart = Date.now();
 
-  // Step 2: Wait for Cloudflare Turnstile to auto-pass & Auto-Click if stuck
+  // Step 2: Wait for Cloudflare Turnstile to auto-pass naturally
   let turnstileSolved = false;
   for (let step = 0; step < 120; step++) { // 120 * 250ms = 30.0s
     const cfInput = document.querySelector('[name="cf-turnstile-response"]');
@@ -383,15 +383,15 @@
       break;
     }
 
-    // Auto-click Turnstile using Hardware-level CDP Trusted Event starting at 1.0s and repeating every 1.5s
-    if (step >= 4 && step % 6 === 0) {
-      console.log(`[FastLogin] 🖱️ กำลังกระตุ้นคลิก Cloudflare Turnstile ด้วย CDP Trusted Event (รอบที่ ${Math.floor(step/6)})...`);
+    // Give Turnstile 6.0 seconds to auto-solve naturally without any interference.
+    // Only if stuck after 6.0s (interactive checkbox challenge), attempt a gentle CDP click once every 4.0s (16 steps).
+    if (step >= 24 && (step - 24) % 16 === 0) {
+      console.log(`[FastLogin] 🖱️ Turnstile ไม่ผ่านอัตโนมัติ กำลังกระตุ้นคลิกด้วย CDP Event...`);
       try {
         const iframes = document.querySelectorAll('iframe[src*="cloudflare"], iframe[src*="challenges"], iframe[src*="turnstile"]');
         for (const ifr of iframes) {
           const rect = ifr.getBoundingClientRect();
           if (rect.width > 0 && rect.height > 0) {
-            // Turnstile checkbox is at ~32px from left, vertically centered
             const clickX = rect.left + 32;
             const clickY = rect.top + (rect.height / 2);
             chrome.runtime.sendMessage({
@@ -399,18 +399,7 @@
               x: clickX,
               y: clickY
             });
-          }
-        }
-
-        const containers = document.querySelectorAll('.cf-turnstile, [data-sitekey]');
-        for (const c of containers) {
-          const rect = c.getBoundingClientRect();
-          if (rect.width > 0 && rect.height > 0) {
-            chrome.runtime.sendMessage({
-              type: "CDP_CLICK",
-              x: rect.left + 32,
-              y: rect.top + 32
-            });
+            break;
           }
         }
       } catch (e) {}
