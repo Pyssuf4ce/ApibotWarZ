@@ -57,6 +57,13 @@ namespace ApibotWarZ.UI.Models
             set { if (_resultDetail != value) { _resultDetail = value; OnPropertyChanged(nameof(ResultDetail)); } }
         }
 
+        private string _sessionStatus = "⚪ ไม่มี";
+        public string SessionStatus
+        {
+            get => _sessionStatus;
+            set { if (_sessionStatus != value) { _sessionStatus = value; OnPropertyChanged(nameof(SessionStatus)); } }
+        }
+
         public event PropertyChangedEventHandler? PropertyChanged;
         protected void OnPropertyChanged(string propertyName) =>
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
@@ -69,6 +76,7 @@ namespace ApibotWarZ.UI.Models
         public string Status { get; set; } = "⏳ รอคิว";
         public string RegisteredAt { get; set; } = "-";
         public string ResultDetail { get; set; } = "";
+        public string SessionStatus { get; set; } = "⚪ ยังไม่ได้ล็อกอิน";
         public bool IsSelected { get; set; } = true;
     }
 }

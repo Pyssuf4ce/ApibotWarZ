@@ -166,6 +166,23 @@ namespace ApibotWarZ.UI.Forms
                 Location = new Point(20, 198)
             };
 
+            var btnLaunchAll = new RoundedButton
+            {
+                Text = "🚀 เปิดทดสอบทุก Profile",
+                Size = new Size(170, 26),
+                Location = new Point(474, 195),
+                BaseColor = Color.FromArgb(40, 45, 75),
+                HoverColor = AccentHover,
+                BorderColor = Accent,
+                CornerRadius = 5,
+                Font = new Font("Segoe UI Semibold", 8.5f),
+                ForeColorNormal = TextMain
+            };
+            btnLaunchAll.Click += (s, e) =>
+            {
+                ChromeProfileService.LaunchAllProfiles();
+            };
+
             pnlProfilesList = new Panel
             {
                 Location = new Point(20, 226),
@@ -175,6 +192,31 @@ namespace ApibotWarZ.UI.Forms
             };
 
             // ─── Bottom Actions ───
+            var btnOpenFolder = new RoundedButton
+            {
+                Text = "📂 เปิดโฟลเดอร์ Profiles",
+                Size = new Size(160, 38),
+                Location = new Point(356, 476),
+                BaseColor = PanelDark,
+                HoverColor = Color.FromArgb(34, 40, 60),
+                BorderColor = CardBorder,
+                CornerRadius = 6,
+                Font = new Font("Segoe UI Semibold", 9.5f),
+                ForeColorNormal = TextMain
+            };
+            btnOpenFolder.Click += (s, e) =>
+            {
+                try
+                {
+                    string dir = ChromeProfileService.GetBotProfilesBaseDir();
+                    if (Directory.Exists(dir))
+                    {
+                        Process.Start(new ProcessStartInfo { FileName = "explorer.exe", Arguments = dir, UseShellExecute = true });
+                    }
+                }
+                catch { }
+            };
+
             var btnClose = new RoundedButton
             {
                 Text = "ปิดหน้าต่าง",
@@ -202,8 +244,10 @@ namespace ApibotWarZ.UI.Forms
             pnlMain.Controls.Add(lblDesc);
             pnlMain.Controls.Add(pnlCreateCard);
             pnlMain.Controls.Add(lblListTitle);
+            pnlMain.Controls.Add(btnLaunchAll);
             pnlMain.Controls.Add(pnlProfilesList);
             pnlMain.Controls.Add(lblTip);
+            pnlMain.Controls.Add(btnOpenFolder);
             pnlMain.Controls.Add(btnClose);
 
             this.Controls.Add(pnlMain);
@@ -228,7 +272,10 @@ namespace ApibotWarZ.UI.Forms
                 RefreshProfilesList();
                 MessageBox.Show(
                     $"สร้าง Profile บอทจำนวน {count} ตัว พร้อม Extension เรียบร้อยแล้ว!\n\n" +
-                    $"คุณสามารถกดปุ่ม '🚀 เปิด' เพื่อทดสอบเปิดดูหน้าต่าง Chrome ของแต่ละตัวได้ทันที",
+                    $"💡 คำแนะนำการใช้งาน:\n" +
+                    $"- กดปุ่ม '🚀 เปิด' ที่รายการด้านล่าง เพื่อเปิดหน้าต่าง Chrome พร้อม Extension อัตโนมัติ\n" +
+                    $"- หรือกดปุ่ม '🚀 เปิดทดสอบทุก Profile' เพื่อเปิดพร้อมกันทุกหน้าต่าง\n" +
+                    $"- หรือกดปุ่ม '📂 เปิดโฟลเดอร์ Profiles' แล้วดับเบิลคลิกไฟล์ Launch_Worker_X.bat ได้เลย",
                     "สร้าง Profile สำเร็จ",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information

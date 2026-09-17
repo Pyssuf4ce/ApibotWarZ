@@ -9,7 +9,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>FastLogin.Launcher</AssemblyName>
     <RootNamespace>ApibotWarZ.UI</RootNamespace>
-    <Version>2.1.1</Version>
+    <Version>1.2.5</Version>
     <NoWarn>$(NoWarn);WFO1000</NoWarn>
   </PropertyGroup>
 

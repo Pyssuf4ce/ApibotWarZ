@@ -33,6 +33,7 @@ type LoginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	WorkerID int    `json:"worker_id,omitempty"`
+	Mode     string `json:"mode,omitempty"`
 }
 
 type LoginResponse struct {
@@ -82,15 +83,6 @@ type PrepareBatchResp struct {
 	ReadyCount     int    `json:"ready_count"`
 	RequestedCount int    `json:"requested_count"`
 }
-
-var (
-	MaxConcurrent = 5
-	allAccounts   []Account
-	processedMap  = make(map[string]bool)
-	retryCountMap = make(map[string]int)
-	limitCountMap = make(map[string]int)
-	accountLock   sync.Mutex
-)
 
 func waitForServerConnection() {
 	client := &http.Client{Timeout: 2 * time.Second}
@@ -241,15 +233,20 @@ func closeBatchOnServer() {
 
 func doLoginRequest(workerID int, acc Account) LoginResult {
 	t0 := time.Now()
-	fmt.Printf("[Bot-%d] 🔓 กำลังเข้าสู่ระบบและตรวจสอบรางวัลสำหรับ '%s'...\n", workerID, acc.Username)
+	if CurrentMode == "harvest" {
+		fmt.Printf("[Bot-%d] 🔑 กำลังเข้าสู่ระบบเพื่อเก็บ Token สำหรับ '%s'...\n", workerID, acc.Username)
+	} else {
+		fmt.Printf("[Bot-%d] 🔓 กำลังเข้าสู่ระบบและตรวจสอบรางวัลสำหรับ '%s'...\n", workerID, acc.Username)
+	}
 	fmt.Printf("[ACC_RUNNING] %s\n", acc.Username)
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 40 * time.Second}
 	reqBody := LoginRequest{
 		URL:      TargetURL,
 		Username: acc.Username,
 		Password: acc.Password,
 		WorkerID: workerID,
+		Mode:     CurrentMode,
 	}
 	jsonBytes, _ := json.Marshal(reqBody)
 
@@ -273,65 +270,201 @@ func doLoginRequest(workerID int, acc Account) LoginResult {
 	var res LoginResponse
 	json.Unmarshal(body, &res)
 
+	if res.Time != "" {
+		elapsedStr = res.Time
+	}
+
 	if res.Status == "success" {
 		detail := res.Detail
 		if detail == "" {
-			detail = "เข้าสู่ระบบสำเร็จ"
+			if CurrentMode == "harvest" {
+				detail = "🔑 บันทึก Token ลงคลังเรียบร้อย"
+			} else if res.RedeemStatus == "success" {
+				detail = fmt.Sprintf("🎁 รับรางวัลสำเร็จ: %s", res.Items)
+			} else if res.RedeemStatus == "already_claimed" {
+				detail = "🟡 รับรางวัลไปแล้วก่อนหน้า"
+			} else {
+				detail = "เข้าสู่ระบบสำเร็จ"
+			}
 		}
-		if res.RedeemStatus == "success" {
-			fmt.Printf("[Bot-%d] 🎉 [%s] ล็อกอิน & รับรางวัลสำเร็จ (%s) ➔ %s\n", workerID, acc.Username, elapsedStr, res.Items)
-		} else if res.RedeemStatus == "already_claimed" {
-			fmt.Printf("[Bot-%d] 🟡 [%s] ล็อกอินสำเร็จ (เคยรับรางวัลไปแล้ว) (%s)\n", workerID, acc.Username, elapsedStr)
-		} else if res.RedeemStatus == "token_missing" {
-			fmt.Printf("[Bot-%d] ⚠️ [%s] ล็อกอินสำเร็จ (แต่ดึง Token รับของไม่ทัน) (%s)\n", workerID, acc.Username, elapsedStr)
-		} else {
-			fmt.Printf("[Bot-%d] 🎉 [%s] เข้าสู่ระบบสำเร็จ (%s) ➔ %s\n", workerID, acc.Username, elapsedStr, detail)
-		}
-		fmt.Printf("[ACC_SUCCESS] %s|%s|%s\n", acc.Username, elapsedStr, detail)
 		return LoginResult{
 			Success:    true,
+			IsLimit:    false,
+			IsBadPwd:   false,
 			ElapsedStr: elapsedStr,
 			Detail:     detail,
 		}
 	} else {
 		reason := res.Reason
 		if reason == "" {
+			reason = res.Message
+		}
+		if reason == "" {
 			reason = res.Detail
 		}
 		if reason == "" {
-			reason = "เข้าสู่ระบบไม่สำเร็จ หรือรหัสผ่านผิด"
+			reason = "เข้าสู่ระบบไม่สำเร็จ"
 		}
-		isLimit := res.IsLimit || strings.Contains(strings.ToLower(reason), "limit") || strings.Contains(reason, "1015") || strings.Contains(strings.ToLower(reason), "too many requests") || strings.Contains(reason, "429")
-		isBadPwd := strings.Contains(reason, "รหัสผ่านไม่ถูกต้อง") || strings.Contains(reason, "ไม่พบบัญชี") || strings.Contains(strings.ToLower(reason), "invalid")
-
-		if isLimit {
-			fmt.Printf("[Bot-%d] ⚠️ บัญชี '%s' ติด Limit IP ชั่วคราว (%s)\n", workerID, acc.Username, elapsedStr)
-		} else if isBadPwd {
-			fmt.Printf("[Bot-%d] ❌ บัญชี '%s' แจ้งว่ารหัสผ่านไม่ถูกต้อง (%s)\n", workerID, acc.Username, elapsedStr)
-		} else {
-			fmt.Printf("[Bot-%d] ⚠️ บัญชี '%s' เกิดปัญหา: %s (%s)\n", workerID, acc.Username, reason, elapsedStr)
-		}
-
 		return LoginResult{
 			Success:    false,
-			IsLimit:    isLimit,
-			IsBadPwd:   isBadPwd,
+			IsLimit:    res.IsLimit,
+			IsBadPwd:   strings.Contains(reason, "รหัสผ่านไม่ถูกต้อง") || strings.Contains(reason, "ไม่พบชื่อผู้ใช้"),
 			ElapsedStr: elapsedStr,
 			Reason:     reason,
 		}
 	}
 }
 
+var (
+	MaxConcurrent     = 5
+	BatchCooldownSec  = 5
+	DeepCooldownEvery = 10
+	DeepCooldownSec   = 15
+	LimitCooldownSec  = 20
+	CurrentMode       = "all" // "all", "harvest", "redeem_only"
+	allAccounts       []Account
+	processedMap      = make(map[string]bool)
+	retryCountMap     = make(map[string]int)
+	limitCountMap     = make(map[string]int)
+	accountLock       sync.Mutex
+)
+
+func runDirectRedeemAllPass() {
+	accountLock.Lock()
+	total := len(allAccounts)
+	accountLock.Unlock()
+
+	if total == 0 {
+		return
+	}
+
+	fmt.Printf("\n⚡ [Direct Redeem 100 จอ] ตรวจสอบ Token และยิงรับรางวัลตรงผ่าน API ทุกไอดีพร้อมกัน (%d บัญชี) [0s Browser]...\n", total)
+
+	var wg sync.WaitGroup
+	concurrency := 30
+	if MaxConcurrent > 10 {
+		concurrency = MaxConcurrent
+	}
+	if concurrency > 50 {
+		concurrency = 50
+	}
+	sem := make(chan struct{}, concurrency)
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	successCount := 0
+	failCount := 0
+
+	for _, acc := range allAccounts {
+		wg.Add(1)
+		go func(targetAcc Account) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			t0 := time.Now()
+			fmt.Printf("[ACC_RUNNING] %s\n", targetAcc.Username)
+
+			reqBody := LoginRequest{
+				URL:      TargetURL,
+				Username: targetAcc.Username,
+				Password: targetAcc.Password,
+				Mode:     "redeem_only",
+			}
+			jsonBytes, _ := json.Marshal(reqBody)
+
+			resp, err := client.Post(ServerURL, "application/json", bytes.NewBuffer(jsonBytes))
+			elapsedStr := fmt.Sprintf("%.2fs", time.Since(t0).Seconds())
+
+			if err != nil {
+				accountLock.Lock()
+				failCount++
+				accountLock.Unlock()
+				fmt.Printf("⚡ [Direct Redeem] ❌ [%s] เกิดข้อผิดพลาดเครือข่าย (%s): %v\n", targetAcc.Username, elapsedStr, err)
+				fmt.Printf("[ACC_FAIL] %s|%s|เครือข่ายขัดข้อง\n", targetAcc.Username, elapsedStr)
+				return
+			}
+			defer resp.Body.Close()
+
+			body, _ := io.ReadAll(resp.Body)
+			var res LoginResponse
+			json.Unmarshal(body, &res)
+
+			if res.Time != "" {
+				elapsedStr = res.Time
+			}
+
+			if res.Status == "success" {
+				accountLock.Lock()
+				processedMap[targetAcc.Username] = true
+				successCount++
+				accountLock.Unlock()
+
+				detail := res.Detail
+				if detail == "" {
+					detail = "🎁 รับรางวัลสำเร็จ"
+				}
+				fmt.Printf("⚡ [Direct Redeem] 🎉 [%s] รับรางวัลสำเร็จ (%s) ➔ %s\n", targetAcc.Username, elapsedStr, detail)
+				fmt.Printf("[ACC_SUCCESS] %s|%s|%s\n", targetAcc.Username, elapsedStr, detail)
+			} else {
+				accountLock.Lock()
+				failCount++
+				accountLock.Unlock()
+
+				reason := res.Reason
+				if reason == "" {
+					reason = res.Detail
+				}
+				if reason == "" {
+					reason = "❌ ยังไม่มี Token ในระบบ (กรุณาล็อกอินก่อน)"
+				}
+				fmt.Printf("⚡ [Direct Redeem] ❌ [%s] %s (%s)\n", targetAcc.Username, reason, elapsedStr)
+				fmt.Printf("[ACC_FAIL] %s|%s|%s\n", targetAcc.Username, elapsedStr, reason)
+			}
+		}(acc)
+	}
+
+	wg.Wait()
+	fmt.Printf("\n🎉 [Direct Redeem] ยิงรับรางวัลครบทั้ง %d บัญชีเสร็จสิ้น! (สำเร็จ: %d, ผิดพลาด/ไม่มี Token: %d)\n", total, successCount, failCount)
+}
+
 func main() {
 	threadsFlag := flag.Int("threads", 5, "จำนวนแท็บ/บอทที่รันพร้อมกันในแต่ละรอบ")
 	fileFlag := flag.String("file", "accounts.txt", "ไฟล์รายการไอดีที่ต้องการรัน")
+	modeFlag := flag.String("mode", "all", "โหมดการทำงาน: 'all' (ล็อกอิน+รับของ), 'harvest' (เก็บ Token อย่างเดียว), 'redeem_only' (ยิงรับของ 100 จอ)")
+	cooldownFlag := flag.Int("cooldown", 5, "ระยะเวลาพักคูลดาวน์ระหว่างแต่ละรอบ (วินาที)")
+	deepEveryFlag := flag.Int("deep-cooldown-every", 10, "จำนวนไอดีที่ทำเสร็จแล้วจะพักคูลดาวน์ลึกป้องกัน 429")
+	deepSecFlag := flag.Int("deep-cooldown-sec", 15, "ระยะเวลาพักคูลดาวน์ลึกป้องกัน 429 (วินาที)")
+	limitSecFlag := flag.Int("limit-cooldown-sec", 20, "ระยะเวลาพักคูลดาวน์เมื่อตรวจพบ 429/1015 (วินาที)")
 	flag.Parse()
 
 	if *threadsFlag > 0 {
 		MaxConcurrent = *threadsFlag
 	}
+	if *cooldownFlag >= 0 {
+		BatchCooldownSec = *cooldownFlag
+	}
+	if *deepEveryFlag > 0 {
+		DeepCooldownEvery = *deepEveryFlag
+	}
+	if *deepSecFlag > 0 {
+		DeepCooldownSec = *deepSecFlag
+	}
+	if *limitSecFlag > 0 {
+		LimitCooldownSec = *limitSecFlag
+	}
+	if *modeFlag != "" {
+		CurrentMode = strings.ToLower(*modeFlag)
+	}
 
-	fmt.Printf("🚀 เริ่มต้น FastLogin Batch Engine v%s (รอบละ %d จอ)...\n", AppVersion, MaxConcurrent)
+	modeLabel := "🎁 ล็อกอิน & รับรางวัล (ปกติ)"
+	if CurrentMode == "harvest" {
+		modeLabel = "🔑 ล็อกอินเก็บ Session Token อย่างเดียว"
+	} else if CurrentMode == "redeem_only" {
+		modeLabel = "⚡ ตรวจสอบ Token ยิงรับของอย่างเดียว (100 จอพร้อมกัน)"
+	}
+
+	fmt.Printf("🚀 เริ่มต้น FastLogin Engine v%s [%s] (รอบละ %d จอ | พักระหว่างรอบ %ds | ป้องกัน 429 ทุก %d ไอดี พัก %ds)...\n",
+		AppVersion, modeLabel, MaxConcurrent, BatchCooldownSec, DeepCooldownEvery, DeepCooldownSec)
 
 	// 1. รอให้เซิร์ฟเวอร์เปิดก่อน
 	waitForServerConnection()
@@ -354,13 +487,20 @@ func main() {
 		return
 	}
 
+	// ────────── กรณีเลือกโหมด 3: Direct Redeem Only (Zero-Browser 100 จอพร้อมกัน) ──────────
+	if CurrentMode == "redeem_only" {
+		runDirectRedeemAllPass()
+		fmt.Printf("\n[ALL_COMPLETED] 🎉 ดำเนินการยิงรับรางวัลเสร็จสิ้นครบทุกบัญชีแล้ว!\n")
+		return
+	}
+
 	// 3. Phase 1: ตรวจสอบและยิงตรงผ่าน Session Token เดิมที่มีอยู่ในคลัง (Zero-Browser Mode 0s)
 	runCachedTokensPass()
 
 	// 4. Phase 2: รันระบบรอบ Chrome สำหรับบัญชีที่ยังไม่มี Token หรือ Token หมดอายุ
 	runBatchEngine()
 
-	fmt.Printf("\n[ALL_COMPLETED] 🎉 ดำเนินการเข้าสู่ระบบเสร็จสิ้นครบทุกบัญชีแล้ว!\n")
+	fmt.Printf("\n[ALL_COMPLETED] 🎉 ดำเนินการเสร็จสิ้นครบทุกบัญชีแล้ว!\n")
 }
 
 var labeledRegex = regexp.MustCompile(`(?i)ID\s*:\s*(\S+)\s*\|\s*PASS\s*:\s*(\S+)`)
@@ -445,6 +585,8 @@ func loadAccounts(filePath string) {
 }
 
 func runBatchEngine() {
+	totalProcessedSession := 0
+
 	for {
 		accountLock.Lock()
 		var retryQueue []Account
@@ -498,16 +640,16 @@ func runBatchEngine() {
 				continue
 			}
 
-			fmt.Printf("🚀 [รอบที่ %d/%d] แคปช่าพร้อมครบทั้ง %d จอแล้ว! เริ่มลำเลียงกดยิงล็อกอิน (Micro-Pacing 0.8s ป้องกัน Limit)...\n", batchNum, totalBatches, currentCount)
+			fmt.Printf("🚀 [รอบที่ %d/%d] แคปช่าพร้อมครบทั้ง %d จอแล้ว! เริ่มลำเลียงกดยิงล็อกอิน (Micro-Pacing 1.0s ป้องกัน Limit)...\n", batchNum, totalBatches, currentCount)
 
-			// 2. ลำเลียงยิงล็อกอินทีละจอ โดยปล่อยเธรดห่างกัน 250ms และให้ Server Pacing 0.8s ป้องกันชน 429
+			// 2. ลำเลียงยิงล็อกอินทีละจอ โดยปล่อยเธรดห่างกัน 350ms และให้ Server Pacing 2.2s ป้องกันชน 429
 			var wg sync.WaitGroup
 			var mu sync.Mutex
 			batchResults := make(map[string]LoginResult)
 
 			for i, acc := range currentBatch {
 				if i > 0 {
-					time.Sleep(250 * time.Millisecond) // Stagger 250ms กระจายงานเข้า Chrome แต่ละจอทันที
+					time.Sleep(150 * time.Millisecond) // Stagger 150ms กระจายงานเข้า Chrome แต่ละจออย่างรวดเร็ว
 				}
 				wg.Add(1)
 				go func(workerID int, targetAcc Account) {
@@ -526,18 +668,22 @@ func runBatchEngine() {
 			accountLock.Lock()
 			requeueCount := 0
 			limitEncountered := false
+			batchSuccessCount := 0
 
 			for _, acc := range currentBatch {
 				res := batchResults[acc.Username]
 				if res.Success {
 					processedMap[acc.Username] = true
+					batchSuccessCount++
+					fmt.Printf("🎉 [%s] เข้าสู่ระบบสำเร็จ (%s) ➔ %s\n", acc.Username, res.ElapsedStr, res.Detail)
+					fmt.Printf("[ACC_SUCCESS] %s|%s|%s\n", acc.Username, res.ElapsedStr, res.Detail)
 				} else if res.IsLimit {
 					limitEncountered = true
 					limitCountMap[acc.Username]++
 					if limitCountMap[acc.Username] <= 3 {
 						requeueCount++
-						fmt.Printf("[Auto-Retry] ⏳ บัญชี '%s' ติด Limit Cloudflare 1015 (รอบที่ %d/3) — ระบบจะพักคูลดาวน์และรันซ้ำให้อัตโนมัติทันที\n", acc.Username, limitCountMap[acc.Username])
-						fmt.Printf("[ACC_LIMIT] %s|%s|ติด Limit Cloudflare 1015 (รอบที่ %d/3 - รอคูลดาวน์ 15s แล้วรันซ้ำทันที)\n", acc.Username, res.ElapsedStr, limitCountMap[acc.Username])
+						fmt.Printf("[Auto-Retry] ⏳ บัญชี '%s' ติด Limit Cloudflare 1015/429 (รอบที่ %d/3) — ระบบจะพักคูลดาวน์ %ds แล้วรันซ้ำอัตโนมัติ\n", acc.Username, limitCountMap[acc.Username], LimitCooldownSec)
+						fmt.Printf("[ACC_LIMIT] %s|%s|ติด Limit Cloudflare (รอบที่ %d/3 - รอคูลดาวน์ %ds แล้วรันซ้ำทันที)\n", acc.Username, res.ElapsedStr, limitCountMap[acc.Username], LimitCooldownSec)
 					} else {
 						// เกินโควตาลองซ้ำ 3 ครั้งแล้วจริง ถึงจะตัดเป็นล้มเหลว
 						processedMap[acc.Username] = true
@@ -571,26 +717,30 @@ func runBatchEngine() {
 			}
 			accountLock.Unlock()
 
-			// 3. จัดการคูลดาวน์และคืน RAM
-			if limitEncountered || requeueCount > 0 {
-				if limitEncountered {
-					fmt.Printf("⏳ [Cool-down] มีบัญชีติด Limit 429 — พักสั้นๆ 3 วินาที เพื่อรันไอดีใหม่ต่อทันที...\n")
-					closeBatchOnServer()
-					time.Sleep(3 * time.Second)
-				} else {
-					fmt.Printf("🔄 [Priority Retry] มีบัญชีรอรันซ้ำ %d บัญชี — ดึงกลับมารันซ้ำทันทีในรอบถัดไป...\n", requeueCount)
-					closeBatchOnServer()
-					time.Sleep(2 * time.Second)
-				}
-				break // สั่ง break ทันทีเพื่อกลับไปคิวหลัก และดึงไอดีที่รอรันซ้ำขึ้นมาทำก่อนเป็นลำดับแรกทันที!
-			} else if (batchNum%3 == 0) || (bIdx+1 == totalBatches) {
-				fmt.Printf("🛑 [รอบที่ %d/%d] ล้างแคชรีเฟรชเบราว์เซอร์ และพักคูลดาวน์ 4s...\n", batchNum, totalBatches)
+			totalProcessedSession += batchSuccessCount
+
+			// 3. จัดการคูลดาวน์และระบบป้องกัน 429 ล่วงหน้า
+			if limitEncountered {
+				fmt.Printf("\n🛑 [Rate Limit Cooldown] ตรวจพบ Cloudflare 429/1015 — กำลังพักคูลดาวน์ %d วินาที เพื่อให้ IP คลายตัว...\n", LimitCooldownSec)
 				closeBatchOnServer()
-				time.Sleep(4 * time.Second)
+				time.Sleep(time.Duration(LimitCooldownSec) * time.Second)
+				break // สั่ง break ทันทีเพื่อกลับไปคิวหลัก และดึงไอดีที่รอรันซ้ำขึ้นมาทำก่อนเป็นลำดับแรกทันที
+			} else if requeueCount > 0 {
+				fmt.Printf("🔄 [Priority Retry] มีบัญชีรอรันซ้ำ %d บัญชี — พัก 3s แล้วดึงกลับมารันซ้ำทันที...\n", requeueCount)
+				closeBatchOnServer()
+				time.Sleep(3 * time.Second)
+				break
+			} else if DeepCooldownEvery > 0 && totalProcessedSession > 0 && (totalProcessedSession%DeepCooldownEvery == 0 || (totalProcessedSession >= DeepCooldownEvery && bIdx+1 < totalBatches && (bIdx+1)%2 == 0)) {
+				// 🛡️ Preventative Cooldown: พักชะลอล่วงหน้าเมื่อรันครบโควตา เพื่อป้องกัน Too Many Requests ก่อนเกิด
+				fmt.Printf("\n🛡️ [Preventative Cooldown] ดำเนินการเสร็จสิ้นสะสม %d บัญชี! พักชะลอระบบ %d วินาที เพื่อรีเซ็ต Cloudflare Rate Limit ล่วงหน้า (ป้องกัน 429)...\n", totalProcessedSession, DeepCooldownSec)
+				closeBatchOnServer()
+				time.Sleep(time.Duration(DeepCooldownSec) * time.Second)
+			} else if bIdx+1 < totalBatches {
+				fmt.Printf("⏳ [Batch Cooldown] พักระหว่างรอบ %d วินาที...\n", BatchCooldownSec)
+				time.Sleep(time.Duration(BatchCooldownSec) * time.Second)
 			} else {
-				if bIdx+1 < totalBatches {
-					time.Sleep(500 * time.Millisecond)
-				}
+				// รอบสุดท้าย
+				closeBatchOnServer()
 			}
 		}
 

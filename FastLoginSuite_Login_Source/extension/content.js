@@ -1,6 +1,22 @@
 // FastLogin Chrome Extension - Content Script (Direct Sync Engine)
+// Fixes: Session isolation, Promise race condition, Rate limit detection,
+//        Turnstile timeout (15s), Poll max retry, Event ID configurable
 (async function() {
   console.log("[FastLogin] Content script loaded on:", window.location.href);
+
+  // ── Load config from background (event_id etc.) ──
+  let EXT_CONFIG = { event_id: "a297cbd7-c1c4-448f-9e9f-0f2a35d28ac3" };
+  try {
+    const cfgRes = await new Promise((resolve) => {
+      let resolved = false;
+      const done = (val) => { if (!resolved) { resolved = true; resolve(val); } };
+      chrome.runtime.sendMessage({ type: "GET_CONFIG" }, (response) => done(response));
+      setTimeout(() => done(null), 1000);
+    });
+    if (cfgRes && cfgRes.config) {
+      EXT_CONFIG = { ...EXT_CONFIG, ...cfgRes.config };
+    }
+  } catch (e) {}
 
   // Floating Visual HUD for user status visibility
   function showHUD(text, color = "#6366f1") {
@@ -90,10 +106,10 @@
     // 5. Request cookies from background service worker (all domains)
     try {
       const cookieRes = await new Promise((resolve) => {
-        chrome.runtime.sendMessage({ type: "GET_ALL_COOKIES" }, (response) => {
-          resolve(response);
-        });
-        setTimeout(() => resolve(null), 1000);
+        let resolved = false;
+        const done = (val) => { if (!resolved) { resolved = true; resolve(val); } };
+        chrome.runtime.sendMessage({ type: "GET_ALL_COOKIES" }, (response) => done(response));
+        setTimeout(() => done(null), 1000);
       });
 
       if (cookieRes && cookieRes.cookies) {
@@ -110,15 +126,24 @@
     return "";
   }
 
+  // ── FIX #3: Safe Promise wrapper (no double-resolve) ──
+  function safeSendMessage(msg, timeoutMs = 2500) {
+    return new Promise((resolve) => {
+      let resolved = false;
+      const done = (val) => { if (!resolved) { resolved = true; resolve(val); } };
+      try {
+        chrome.runtime.sendMessage(msg, (response) => done(response));
+      } catch (e) {
+        done(null);
+      }
+      setTimeout(() => done(null), timeoutMs);
+    });
+  }
+
   // Robust Server Communication via Extension Service Worker (CORS & PNA Bypassed)
   async function sendWorkerDone(wid, payload) {
     try {
-      const res = await new Promise((resolve) => {
-        chrome.runtime.sendMessage({ type: "REPORT_DONE", wid: wid, payload: payload }, (response) => {
-          resolve(response);
-        });
-        setTimeout(() => resolve(null), 2500);
-      });
+      const res = await safeSendMessage({ type: "REPORT_DONE", wid: wid, payload: payload }, 3000);
       if (res && res.success) {
         console.log("[FastLogin] ✅ รายงานผลลัพธ์ผ่าน Service Worker สำเร็จ");
         return true;
@@ -126,53 +151,33 @@
     } catch (e) {
       console.warn("[FastLogin] Service Worker report_done error:", e);
     }
-
-    // Direct fetch fallback
-    try {
-      await fetch(`http://127.0.0.1:5000/worker/${wid}/done`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      console.log("[FastLogin] ✅ รายงานผลลัพธ์ผ่าน Direct Fetch สำเร็จ");
-      return true;
-    } catch (e) {
-      console.error("[FastLogin] Direct fetch error:", e);
-      return false;
-    }
+    return false;
   }
 
   async function fetchWorkerTask(wid) {
     try {
-      const res = await new Promise((resolve) => {
-        chrome.runtime.sendMessage({ type: "FETCH_TASK", wid: wid }, (response) => {
-          resolve(response);
-        });
-        setTimeout(() => resolve(null), 1500);
-      });
+      const res = await safeSendMessage({ type: "FETCH_TASK", wid: wid }, 2000);
       if (res && res.success && res.data && res.data.task) {
         return res.data.task;
       }
     } catch (e) {}
-
-    // Direct fetch fallback
-    try {
-      const r = await fetch(`http://127.0.0.1:5000/worker/${wid}/task`, {
-        cache: "no-store",
-        headers: { "Accept": "application/json" }
-      });
-      if (r.ok) {
-        const data = await r.json();
-        return data?.task || null;
-      }
-    } catch (e) {}
-
     return null;
   }
 
-  async function cleanupAndReturnToLogin(wid) {
+  // ── FIX #10: Server health check ──
+  async function checkServerAlive() {
     try {
-      await chrome.storage.local.remove(["fastlogin_user", "fastlogin_task"]);
+      const res = await safeSendMessage({ type: "CHECK_SERVER_HEALTH" }, 1500);
+      if (res && res.success) return true;
+    } catch (e) {}
+    return false;
+  }
+
+  // ── FIX #1 & #2: Full session cleanup ──
+  async function cleanupAndReturnToLogin(wid) {
+    // Clear ALL extension storage (fixes session isolation across accounts)
+    try {
+      await chrome.storage.local.clear();
     } catch (e) {}
 
     try {
@@ -181,15 +186,38 @@
     } catch (e) {}
 
     try {
-      await new Promise((resolve) => {
-        chrome.runtime.sendMessage({ type: "CLEAR_COOKIES" }, () => resolve());
-        setTimeout(resolve, 600);
-      });
+      await safeSendMessage({ type: "HARD_PURGE_SESSION" }, 1500);
+    } catch (e) {}
+
+    // Re-store only the wid for this worker (after clearing everything)
+    try {
+      await chrome.storage.local.set({ fastlogin_wid: wid });
     } catch (e) {}
 
     setTimeout(() => {
-      window.location.href = `https://passport.thehof.gg/hall-of-fame-web/login#wid=${wid}`;
-    }, 1200);
+      window.location.replace(`https://passport.thehof.gg/hall-of-fame-web/login?_t=${Date.now()}#wid=${wid}`);
+    }, 1000);
+  }
+
+  // ── FIX #5: Enhanced Rate Limit & Hard Block Detection (No False Positives) ──
+  function checkIfRateLimited() {
+    const title = (document.title || "").toLowerCase();
+    const text = (document.body ? document.body.innerText : "").toLowerCase();
+
+    // Standard 429 / 1015 / WAF Block checks only
+    if (title.includes("too many requests") || title.includes("error 1015") || title.includes("rate limited") || title.includes("429")) {
+      return true;
+    }
+    if (text.includes("too many requests") || text.includes("error 1015") || text.includes("you are being rate limited") || text.includes("429 too many requests") || text.includes("rate limit exceeded")) {
+      return true;
+    }
+
+    // Hard Cloudflare WAF block (Access Denied 1020/1006)
+    if (text.includes("access denied") && (text.includes("cloudflare") || text.includes("ray id"))) {
+      return true;
+    }
+
+    return false;
   }
 
   // ══════════════════════════════════════════════════════════════════
@@ -199,10 +227,7 @@
                        (window.location.hostname.includes("thehof.gg") && !window.location.pathname.includes("/login"));
 
   if (isMemberPage) {
-    console.log("[FastLogin] 🎉 ตรวจพบหน้า Member Portal! เริ่มการสกัดโทเคนและรับรางวัล...");
-    showHUD("🎉 ล็อกอินสำเร็จ! กำลังสกัด Token และรับรางวัล...", "#10b981");
-
-    // อ่านข้อมูล Worker & Username จาก chrome.storage.local (ไม่หลุดแม้ข้ามโดเมน)
+    // อ่านข้อมูล Worker & Username จาก chrome.storage.local
     let wid = "1";
     let username = "";
     try {
@@ -211,25 +236,77 @@
       if (stored.fastlogin_user) username = stored.fastlogin_user;
     } catch (e) {}
 
-    // ดึง Token จากทุกแหล่ง
-    let token = "";
-    for (let attempt = 0; attempt < 20; attempt++) {
-      token = await extractToken();
-      if (token && token.length > 30) break;
-      await new Promise(r => setTimeout(r, 250));
+    // ป้องกัน Infinite Extraction Loop: หากไม่มีบัญชีที่กำลังประมวลผล ให้ล้างเซสชันและกลับหน้า Login ทันที
+    if (!username) {
+      console.warn("[FastLogin] ⚠️ อยู่บนหน้า Member Portal แต่ไม่มีคิวงานที่กำลังล็อกอิน — ล้างเซสชันและกลับหน้า Login");
+      await cleanupAndReturnToLogin(wid);
+      return;
     }
 
-    console.log(`[FastLogin] Worker-${wid} | บัญชี: '${username}' | Token Length: ${token.length}`);
+    console.log(`[FastLogin] 🎉 ตรวจพบหน้า Member Portal ของ '${username}'! เริ่มการสกัดโทเคนและรับรางวัล...`);
+    showHUD(`🎉 ล็อกอิน '${username}' สำเร็จ! กำลังสกัด Token และรับรางวัล...`, "#10b981");
+
+    // Helper: ถอดรหัส JWT Payload เพื่อตรวจสอบความถูกต้องและป้องกัน Token ปนกันข้ามไอดี
+    function decodeJwt(tok) {
+      try {
+        const p = tok.split(".");
+        if (p.length !== 3) return null;
+        const b64 = p[1].replace(/-/g, '+').replace(/_/g, '/');
+        const pad = b64 + "=".repeat((4 - b64.length % 4) % 4);
+        return JSON.parse(atob(pad));
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // ดึง Token จากทุกแหล่ง พร้อมตรวจความถูกต้อง 100%
+    let token = "";
+    for (let attempt = 0; attempt < 25; attempt++) {
+      const candidate = await extractToken();
+      if (candidate && candidate.length > 50) {
+        const payload = decodeJwt(candidate);
+        if (payload) {
+          // 1. ตรวจสอบว่า Token ยังไม่หมดอายุ
+          const nowSec = Math.floor(Date.now() / 1000);
+          if (payload.exp && nowSec > payload.exp) {
+            console.warn("[FastLogin] ⚠️ ตรวจพบ Token หมดอายุใน Cookie — ข้ามเพื่อรอ Token ใหม่");
+          } else {
+            // 2. ตรวจสอบว่าชื่อผู้ใช้ตรงกับไอดีปัจจุบัน (ป้องกัน Token ปนกันข้ามจอ)
+            const tokenUser = (payload.username || payload.account_name || payload.account || "").toString().toLowerCase();
+            const curUser = (username || "").toLowerCase();
+            if (tokenUser && curUser && tokenUser !== curUser) {
+              console.warn(`[FastLogin] ⚠️ ตรวจพบ Token ของไอดีเก่า '${tokenUser}' ปนมาใน Cookie (กำลังล็อกอิน '${curUser}') — รอคัดกรอง Token ใหม่`);
+            } else {
+              token = candidate;
+              break;
+            }
+          }
+        } else {
+          token = candidate;
+          break;
+        }
+      }
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    console.log(`[FastLogin] Worker-${wid} | บัญชี: '${username}' | Token Length: ${token ? token.length : 0}`);
 
     let redeemStatus = "unknown";
     let itemsStr = "";
     let detailMsg = "เข้าสู่ระบบสำเร็จ";
 
-    // ยิง API รับรางวัลกิจกรรม — retry สูงสุด 2 รอบถ้า fail ครั้งแรก
-    const eventId = "a297cbd7-c1c4-448f-9e9f-0f2a35d28ac3"; // STAY ALIVE event
-    const redeemUrl = `https://core-api.thehof.gg/me/events/${eventId}/redeem`;
+    // ตรวจสอบโหมด: หากเป็นโหมดดูด Token อย่างเดียว (harvest) ให้ข้ามการยิงรับของ
+    const isHarvestMode = (EXT_CONFIG.mode === "harvest");
+    if (isHarvestMode) {
+      redeemStatus = "skipped_harvest";
+      detailMsg = "🔑 บันทึก Token ลงคลังเรียบร้อย (โหมดดูด Token)";
+      console.log(`[FastLogin] 🔑 บันทึก Token สำเร็จ — ข้ามการยิงรับของตามโหมด Harvest`);
+    } else {
+      // ยิง API รับรางวัลกิจกรรม — retry สูงสุด 2 รอบถ้า fail ครั้งแรก
+      const eventId = EXT_CONFIG.event_id;
+      const redeemUrl = `https://core-api.thehof.gg/me/events/${eventId}/redeem`;
 
-    for (let redeemAttempt = 0; redeemAttempt < 2; redeemAttempt++) {
+      for (let redeemAttempt = 0; redeemAttempt < 2; redeemAttempt++) {
       if (redeemAttempt > 0) {
         await new Promise(r => setTimeout(r, 1500)); // รอก่อน retry
       }
@@ -286,22 +363,7 @@
         console.error(`[FastLogin] Redeem attempt ${redeemAttempt + 1} error:`, e);
       }
     }
-
-    // คลิกปุ่มรับของบนหน้าเว็บหากมี (DOM Clicker)
-    try {
-      const allButtons = Array.from(document.querySelectorAll("button, a, div, span, [role='button']"));
-      for (const btn of allButtons) {
-        const txt = (btn.innerText || btn.textContent || "").trim();
-        if (txt.includes("รับของ") || txt.includes("รับรางวัล") || txt.includes("แลกรับ") || txt.includes("กดรับ") || txt.includes("Claim") || txt.includes("Redeem")) {
-          if (!txt.includes("เคยรับ") && !txt.includes("แล้ว")) {
-            console.log(`[FastLogin] 🖱️ กำลังกดปุ่มบนหน้าเว็บ: "${txt}"`);
-            btn.click();
-            await new Promise(r => setTimeout(r, 600));
-            break;
-          }
-        }
-      }
-    } catch (e) {}
+    }
 
     // ส่งผลลัพธ์กลับไปยัง Local Server (ผ่าน SW หรือ fetch)
     await sendWorkerDone(wid, {
@@ -340,18 +402,6 @@
   console.log(`[FastLogin] 🚀 Worker ${wid} พร้อมทำงานบนหน้าล็อกอิน กำลังดึงงานจากเซิร์ฟเวอร์...`);
   showHUD(`⚡ HOF Bot พร้อมทำงาน (Worker #${wid}) | กำลังรอรับคิวงาน...`, "#6366f1");
 
-  function checkIfRateLimited() {
-    const title = (document.title || "").toLowerCase();
-    const text = (document.body ? document.body.innerText : "").toLowerCase();
-    if (title.includes("too many requests") || title.includes("error 1015") || title.includes("rate limited") || title.includes("429")) {
-      return true;
-    }
-    if (text.includes("too many requests") || text.includes("error 1015") || text.includes("you are being rate limited") || text.includes("429 too many requests") || text.includes("rate limit exceeded")) {
-      return true;
-    }
-    return false;
-  }
-
   // If already rate limited upon page load
   if (checkIfRateLimited()) {
     console.warn("[FastLogin] ⚠️ ตรวจพบหน้า Too Many Requests (429) ตั้งแต่เริ่มต้น!");
@@ -366,9 +416,12 @@
     return;
   }
 
-  // Step 1: Poll server for assigned task
+  // ── FIX #10: Poll with max retry limit & server health check ──
   let currentTask = null;
-  while (!currentTask) {
+  let pollAttempts = 0;
+  const MAX_POLL_ATTEMPTS = 120; // 120 * 500ms = 60 seconds max
+
+  while (!currentTask && pollAttempts < MAX_POLL_ATTEMPTS) {
     if (checkIfRateLimited()) {
       await sendWorkerDone(wid, {
         status: "failed",
@@ -380,11 +433,29 @@
       });
       return;
     }
+
     currentTask = await fetchWorkerTask(wid);
     if (currentTask && currentTask.username) {
       break;
     }
+
+    // Check server health every 20 attempts (10 seconds)
+    if (pollAttempts > 0 && pollAttempts % 20 === 0) {
+      const alive = await checkServerAlive();
+      if (!alive) {
+        console.warn(`[FastLogin] ⚠️ Server ไม่ตอบสนองหลังจาก ${pollAttempts} รอบ กำลังรอต่อ...`);
+        showHUD(`⚠️ Server ไม่ตอบสนอง กำลังรอต่อ... (${pollAttempts}/${MAX_POLL_ATTEMPTS})`, "#f59e0b");
+      }
+    }
+
+    pollAttempts++;
     await new Promise(r => setTimeout(r, 500));
+  }
+
+  if (!currentTask || !currentTask.username) {
+    console.warn(`[FastLogin] ⚠️ Worker ${wid} ไม่ได้รับงานหลังจาก ${MAX_POLL_ATTEMPTS} รอบ`);
+    showHUD(`⚠️ ไม่ได้รับงานหลังรอ 60 วินาที`, "#ef4444");
+    return;
   }
 
   console.log(`[FastLogin] 📥 ได้รับงาน: บัญชี '${currentTask.username}'. กำลังรอ Turnstile...`);
@@ -399,19 +470,114 @@
 
   const tStart = Date.now();
 
-  // Step 2: Wait for Cloudflare Turnstile to auto-pass naturally (Fast Timeout: 6.0s)
+  // ── FIX #6: Robust Turnstile Detection, Cursor Simulation & Anti-Stuck Recovery ──
+  function getTurnstileToken() {
+    const cfInput = document.querySelector('[name="cf-turnstile-response"]') ||
+                    document.querySelector('input[name*="turnstile"]') ||
+                    document.querySelector('textarea[name*="turnstile"]') ||
+                    document.querySelector('[name="g-recaptcha-response"]');
+    if (cfInput && cfInput.value && cfInput.value.length > 20) {
+      return cfInput.value;
+    }
+    return null;
+  }
+
+  function tryClickTurnstile() {
+    try {
+      window.focus();
+
+      // 1. Target all Cloudflare Turnstile wrappers & containers
+      const cfWrappers = document.querySelectorAll(
+        '.cf-turnstile, [data-sitekey], #cf-turnstile, div[id*="cf-"], div[class*="turnstile"], div.cf-turnstile-wrapper'
+      );
+      for (const wrap of cfWrappers) {
+        wrap.scrollIntoView({ behavior: 'instant', block: 'center' });
+        wrap.focus();
+        wrap.click();
+
+        const rect = wrap.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          const cx = rect.left + Math.min(30, rect.width / 2);
+          const cy = rect.top + Math.min(30, rect.height / 2);
+          const evtOpts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
+          wrap.dispatchEvent(new MouseEvent('mouseover', evtOpts));
+          wrap.dispatchEvent(new MouseEvent('mouseenter', evtOpts));
+          wrap.dispatchEvent(new MouseEvent('mousemove', evtOpts));
+          wrap.dispatchEvent(new MouseEvent('mousedown', evtOpts));
+          wrap.dispatchEvent(new MouseEvent('mouseup', evtOpts));
+          wrap.dispatchEvent(new MouseEvent('click', evtOpts));
+        }
+      }
+
+      // 2. Target Turnstile iframes and their parents
+      const iframes = document.querySelectorAll('iframe[src*="challenges.cloudflare.com"], iframe[src*="turnstile"]');
+      for (const ifr of iframes) {
+        ifr.focus();
+        ifr.click();
+        if (ifr.parentElement) {
+          ifr.parentElement.click();
+          const pRect = ifr.parentElement.getBoundingClientRect();
+          if (pRect.width > 0 && pRect.height > 0) {
+            ifr.parentElement.dispatchEvent(new MouseEvent('click', {
+              bubbles: true,
+              cancelable: true,
+              clientX: pRect.left + 25,
+              clientY: pRect.top + 25
+            }));
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  function tryResetTurnstile() {
+    try {
+      const script = document.createElement("script");
+      script.textContent = `
+        if (window.turnstile && typeof window.turnstile.reset === 'function') {
+          try { window.turnstile.reset(); } catch(e){}
+        }
+      `;
+      (document.head || document.documentElement).appendChild(script);
+      script.remove();
+    } catch (e) {}
+  }
+
+  function simulateHumanMouse() {
+    try {
+      window.focus();
+      const x = 80 + Math.floor(Math.random() * 200);
+      const y = 80 + Math.floor(Math.random() * 200);
+      const evtOpts = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
+      document.dispatchEvent(new MouseEvent('mousemove', evtOpts));
+      document.dispatchEvent(new MouseEvent('mouseover', evtOpts));
+    } catch(e) {}
+  }
+
   let turnstileSolved = false;
-  for (let step = 0; step < 24; step++) { // 24 * 250ms = 6.0s
-    const cfInput = document.querySelector('[name="cf-turnstile-response"]');
-    if (cfInput && cfInput.value && cfInput.value.length > 30) {
+  // 80 * 250ms = 20.0s max timeout for Turnstile
+  for (let step = 0; step < 80; step++) {
+    const token = getTurnstileToken();
+    if (token) {
       turnstileSolved = true;
       console.log("[FastLogin] ✅ Cloudflare Turnstile ยืนยันสำเร็จ (มี Token)!");
       showHUD(`🛡️ Turnstile ผ่านแล้ว! กำลังเข้าสู่ระบบ: ${currentTask.username}`, "#10b981");
       break;
     }
 
-    if (step === 0 || step === 8) {
-      showHUD(`🛡️ กำลังรอ Cloudflare Turnstile ยืนยันอัตโนมัติ...`, "#8b5cf6");
+    // Natural human mouse movement every 500ms
+    if (step % 2 === 0) {
+      simulateHumanMouse();
+    }
+
+    // Gentle click / reset triggers at 2s and 6s
+    if (step === 8 || step === 24) {
+      tryClickTurnstile();
+      tryResetTurnstile();
+    }
+
+    if (step % 8 === 0) {
+      showHUD(`🛡️ รอ Cloudflare Turnstile ยืนยันอัตโนมัติ... (${(step * 0.25).toFixed(1)}s)`, "#8b5cf6");
     }
 
     if (checkIfRateLimited()) {
@@ -430,16 +596,24 @@
   }
 
   if (!turnstileSolved) {
-    console.warn("[FastLogin] ⚠️ Turnstile ไม่ผ่านใน 6s ➔ ส่งรันซ้ำทันที");
-    showHUD(`🔄 Turnstile ไม่ผ่านใน 6s ➔ นำกลับไปรันซ้ำรอบหน้า`, "#f59e0b");
+    console.warn("[FastLogin] ⚠️ Turnstile หมุนค้างเกิน 20s ➔ ล้างแคช Cloudflare ทั้งหมดและรีเซ็ตหน้าใหม่");
+    showHUD(`🔄 Turnstile ไม่ผ่านใน 20s ➔ ล้างแคชแล้วเริ่มใหม่`, "#f59e0b");
     await sendWorkerDone(wid, {
       status: "failed",
       worker_id: parseInt(wid, 10),
       username: currentTask.username,
-      reason: "Cloudflare Turnstile หมดเวลา (ส่งรันซ้ำ)",
+      reason: "Cloudflare Turnstile หมุนค้าง (ส่งรันซ้ำ)",
       time: `${((Date.now() - tStart) / 1000).toFixed(1)}s`
     });
-    location.reload();
+
+    // Hard purge all cookies, service workers, and Turnstile challenge data before restart
+    try {
+      await safeSendMessage({ type: "HARD_PURGE_SESSION" }, 1500);
+      sessionStorage.clear();
+      localStorage.clear();
+    } catch (e) {}
+
+    window.location.replace(`https://passport.thehof.gg/hall-of-fame-web/login?_t=${Date.now()}#wid=${wid}`);
     return;
   }
 
@@ -482,11 +656,11 @@
   // Step 4: Request Paced Submit Permit to guarantee NO 429 Collisions
   console.log(`[FastLogin] 🚦 กำลังรอคิว Pacing ป้องกันชน Limit ก่อนกดยิงล็อกอิน (Worker-${wid})...`);
   try {
-    await fetch(`http://127.0.0.1:5000/worker/${wid}/acquire_submit`, { cache: "no-store" });
+    await safeSendMessage({ type: "ACQUIRE_SUBMIT", wid: wid }, 2000);
   } catch (e) {}
 
-  // Jitter delay 0-600ms เพิ่มเติม เพื่อกระจาย timing ป้องกัน 429/1015 แม้ผ่าน pacing แล้ว
-  await new Promise(r => setTimeout(r, Math.floor(Math.random() * 600)));
+  // Jitter delay 100-600ms เพิ่มเติม เพื่อกระจาย timing ป้องกัน 429/1015 แม้ผ่าน pacing แล้ว
+  await new Promise(r => setTimeout(r, 100 + Math.floor(Math.random() * 500)));
 
   console.log("[FastLogin] 🚀 กำลังคลิกปุ่มเข้าสู่ระบบ (Submit)...");
   
@@ -520,8 +694,8 @@
     passInput.form.submit();
   }
 
-  // Step 5: Monitor login result
-  for (let waitStep = 0; waitStep < 50; waitStep++) { // 50 * 300ms = 15.0s
+  // Step 5: Monitor login result (70 * 300ms = 21.0s)
+  for (let waitStep = 0; waitStep < 70; waitStep++) {
     await new Promise(r => setTimeout(r, 300));
 
     if (window.location.hostname.includes("member.thehof.gg") || !window.location.pathname.includes("/login")) {

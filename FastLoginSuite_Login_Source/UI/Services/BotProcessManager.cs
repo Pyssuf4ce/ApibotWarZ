@@ -91,7 +91,7 @@ namespace ApibotWarZ.UI.Services
             catch { }
         }
 
-        public async Task<bool> StartAsync(int threads, bool startCaptchaServer, string accountsFile = "accounts.txt")
+        public async Task<bool> StartAsync(int threads, bool startCaptchaServer, string accountsFile = "accounts.txt", int batchCooldown = 5, int deepEvery = 10, int deepSec = 15, int limitSec = 20, string mode = "all")
         {
             if (IsRunning) return false;
 
@@ -124,13 +124,15 @@ namespace ApibotWarZ.UI.Services
                 botExe = Path.Combine(workDir, "FastLoginSuite.exe");
             }
 
+            string botArgs = $"-threads {threads} -file \"{accountsFile}\" -mode \"{mode}\" -cooldown {batchCooldown} -deep-cooldown-every {deepEvery} -deep-cooldown-sec {deepSec} -limit-cooldown-sec {limitSec}";
+
             ProcessStartInfo botPsi;
             if (File.Exists(botExe))
             {
                 botPsi = new ProcessStartInfo
                 {
                     FileName = botExe,
-                    Arguments = $"-threads {threads} -file \"{accountsFile}\"",
+                    Arguments = botArgs,
                     WorkingDirectory = workDir,
                     CreateNoWindow = true,
                     UseShellExecute = false,
@@ -146,7 +148,7 @@ namespace ApibotWarZ.UI.Services
                 botPsi = new ProcessStartInfo
                 {
                     FileName = "go",
-                    Arguments = $"run login_main.go -threads {threads} -file \"{accountsFile}\"",
+                    Arguments = $"run login_main.go {botArgs}",
                     WorkingDirectory = workDir,
                     CreateNoWindow = true,
                     UseShellExecute = false,

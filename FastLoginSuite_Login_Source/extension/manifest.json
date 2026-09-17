@@ -2,6 +2,7 @@
   "manifest_version": 3,
   "name": "HOF FastLogin Extension",
   "version": "1.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAt07Sn8fnU4waBXKlkcKlrh7kyuf4jH/xsXmp46lFCJI2dpibi3h5Koct/nn2VQt3x5EW7SclYKg/pN88paJiIr9Okh331CEdcQUqz7P2b9/Y8I9F6+fjlNQibXbFxj4lsQLqn6ND+v5xdClV8gh/VATddSuu0hBRWWc42GsK7gCACyLyc/9ZZyakw0uNh/NgCuOVyUBTeVN4Q1YjJ0S5iC1hMxbxASEpix2tbugKQwhdbDAOABCppTwHRYQsrxRmv4RhBeGa6y63tWb0spTAzlWXtoqMcgun1yfGr2bmZOQP5J4nzm6LxDl/VY2jTM02eFg5OZxp3KIYv++37u0IlQIDAQAB",
   "description": "Automated Native Login and Token Sync Extension for FastLogin Suite",
   "permissions": [
     "cookies",
@@ -14,7 +15,8 @@
     "https://member.thehof.gg/*",
     "https://core-api.thehof.gg/*",
     "https://challenges.cloudflare.com/*",
-    "http://127.0.0.1:5000/*"
+    "http://127.0.0.1/*",
+    "http://localhost/*"
   ],
   "icons": {
     "128": "icon.png"

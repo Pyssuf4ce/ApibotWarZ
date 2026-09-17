@@ -44,5 +44,7 @@ dist/
 *.pyc
 *.pdb
 
-# Browser profiles
+# Browser profiles & portable binaries
 **/profiles/
+**/chrome-win64/
+

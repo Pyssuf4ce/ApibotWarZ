@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -44,10 +45,13 @@ namespace ApibotWarZ.UI.Forms
         private readonly Dictionary<string, RegisteredAccount> _accountMap = new(StringComparer.OrdinalIgnoreCase);
         private readonly BindingList<RegisteredAccount> _failedAccountsList = new();
         private readonly Dictionary<string, RegisteredAccount> _failedAccountMap = new(StringComparer.OrdinalIgnoreCase);
+        private readonly HashSet<string> _cachedTokenUsers = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentQueue<(string message, Color color, string time)> _logQueue = new();
         private bool _isFailedTabActive = false;
         private string _currentRunningFile = "accounts.txt";
         private readonly Stopwatch _uptimeTimer = new();
         private readonly System.Windows.Forms.Timer _uiTimer;
+        private readonly System.Windows.Forms.Timer _logFlushTimer;
         private int _totalRegisteredCount = 0;
         private int _successCount = 0;
         private int _failCount = 0;
@@ -75,8 +79,7 @@ namespace ApibotWarZ.UI.Forms
 
         // UI Controls - Action Toolbar
         private Panel panelActions = null!;
-        private FlowLayoutPanel flowActionsLeft = null!;
-        private FlowLayoutPanel flowActionsRight = null!;
+        private FlowLayoutPanel flowToolbar = null!;
         private RoundedButton btnStart = null!;
         private RoundedButton btnStop = null!;
         private Panel pnlThreadsCapsule = null!;
@@ -128,6 +131,11 @@ namespace ApibotWarZ.UI.Forms
             _uiTimer.Tick += UiTimer_Tick;
             _uiTimer.Start();
 
+            // Background Batch Log Flush Timer: 50ms interval prevents UI freezes and message queue jams
+            _logFlushTimer = new System.Windows.Forms.Timer { Interval = 50 };
+            _logFlushTimer.Tick += FlushLogs;
+            _logFlushTimer.Start();
+
             // Auto reload accounts ONLY if accounts.txt was actually modified on disk
             this.Activated += (s, e) =>
             {
@@ -166,11 +174,11 @@ namespace ApibotWarZ.UI.Forms
         {
             string verStr = GetAppVersionString();
             this.Text = $"FastLogin Suite {verStr} — Multi-Tab Auto Login Suite";
-            this.Size = new Size(1120, 740);
-            this.MinimumSize = new Size(980, 640);
+            this.Size = new Size(1160, 720);
+            this.MinimumSize = new Size(860, 520);
             this.StartPosition = FormStartPosition.CenterScreen;
             this.BackColor = BgDark;
-            this.Font = new Font("Segoe UI", 9.5f);
+            this.Font = new Font("Segoe UI", 9f);
             this.ForeColor = TextMain;
             this.ShowIcon = true;
             this.Padding = new Padding(0);
@@ -203,14 +211,14 @@ namespace ApibotWarZ.UI.Forms
             };
 
             // ═══════════════════════════════════════════
-            //  1. TOP HEADER (Responsive Anti-Overlap)
+            //  1. TOP HEADER BAR (Compact Sleek 44px)
             // ═══════════════════════════════════════════
             panelTop = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 72,
+                Height = 44,
                 BackColor = PanelDark,
-                Padding = new Padding(22, 8, 22, 8)
+                Padding = new Padding(14, 4, 14, 4)
             };
             panelTop.Paint += (s, e) =>
             {
@@ -221,27 +229,27 @@ namespace ApibotWarZ.UI.Forms
             var pnlTitleGroup = new Panel
             {
                 Dock = DockStyle.Left,
-                Width = 520,
+                Width = 540,
                 BackColor = Color.Transparent
             };
 
             lblTitle = new Label
             {
                 Text = $"⚡ FastLogin Suite {verStr}",
-                Font = new Font("Segoe UI", 16f, FontStyle.Bold),
+                Font = new Font("Segoe UI", 12.5f, FontStyle.Bold),
                 ForeColor = TextMain,
                 AutoSize = true,
-                Location = new Point(0, 8),
+                Location = new Point(0, 9),
                 UseMnemonic = false
             };
 
             lblSubtitle = new Label
             {
-                Text = "High-Performance Multi-Tab Auto Login Suite & Automation Engine",
-                Font = new Font("Segoe UI", 8.8f),
+                Text = "• High-Performance Multi-Tab Engine",
+                Font = new Font("Segoe UI", 8.5f),
                 ForeColor = TextDim,
                 AutoSize = true,
-                Location = new Point(2, 38),
+                Location = new Point(220, 13),
                 UseMnemonic = false
             };
 
@@ -256,7 +264,7 @@ namespace ApibotWarZ.UI.Forms
                 FlowDirection = FlowDirection.RightToLeft,
                 WrapContents = false,
                 BackColor = Color.Transparent,
-                Padding = new Padding(0, 16, 0, 0)
+                Padding = new Padding(0, 6, 0, 0)
             };
 
             string hwid = CloudLicenseService.GetHWID();
@@ -264,12 +272,12 @@ namespace ApibotWarZ.UI.Forms
             lblHwidBadge = new Label
             {
                 Text = $"HWID: {shortHwid} (คัดลอก)",
-                Font = new Font("Segoe UI Semibold", 8.8f, FontStyle.Bold),
+                Font = new Font("Segoe UI Semibold", 8.2f, FontStyle.Bold),
                 ForeColor = Accent,
                 BackColor = CardDark,
                 AutoSize = true,
-                Padding = new Padding(10, 6, 10, 6),
-                Margin = new Padding(8, 0, 0, 0),
+                Padding = new Padding(8, 4, 8, 4),
+                Margin = new Padding(6, 0, 0, 0),
                 Cursor = Cursors.Hand,
                 UseMnemonic = false
             };
@@ -283,12 +291,12 @@ namespace ApibotWarZ.UI.Forms
             lblLicenseBadge = new Label
             {
                 Text = "สิทธิ์: กำลังตรวจสอบ...",
-                Font = new Font("Segoe UI Semibold", 8.8f, FontStyle.Bold),
+                Font = new Font("Segoe UI Semibold", 8.2f, FontStyle.Bold),
                 ForeColor = Success,
                 BackColor = CardDark,
                 AutoSize = true,
-                Padding = new Padding(10, 6, 10, 6),
-                Margin = new Padding(8, 0, 0, 0),
+                Padding = new Padding(8, 4, 8, 4),
+                Margin = new Padding(6, 0, 0, 0),
                 UseMnemonic = false
             };
             lblLicenseBadge.Paint += (s, e) => DrawRoundedChip(e.Graphics, lblLicenseBadge, CardBorder);
@@ -298,29 +306,27 @@ namespace ApibotWarZ.UI.Forms
 
             panelTop.Controls.Add(flowBadges);
             panelTop.Controls.Add(pnlTitleGroup);
-            this.Controls.Add(panelTop);
 
             // ═══════════════════════════════════════════
-            //  2. STATS DASHBOARD (Custom Zero-Artifact Paint)
+            //  2. STATS DASHBOARD (Compact Modern 56px)
             // ═══════════════════════════════════════════
             statsDashboard = new StatsDashboardControl
             {
                 Dock = DockStyle.Top,
-                Height = 88,
+                Height = 56,
                 BackColor = BgDark,
-                Padding = new Padding(18, 10, 18, 6)
+                Padding = new Padding(12, 4, 12, 4)
             };
-            this.Controls.Add(statsDashboard);
 
             // ═══════════════════════════════════════════
-            //  3. ACTION TOOLBAR (Modern Ergonomic Controls)
+            //  3. ACTION TOOLBAR (Responsive Flow Layout)
             // ═══════════════════════════════════════════
             panelActions = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 62,
+                Height = 44,
                 BackColor = PanelDark,
-                Padding = new Padding(18, 10, 18, 10)
+                Padding = new Padding(0)
             };
             panelActions.Paint += (s, e) =>
             {
@@ -328,26 +334,27 @@ namespace ApibotWarZ.UI.Forms
                 e.Graphics.DrawLine(pen, 0, panelActions.Height - 1, panelActions.Width, panelActions.Height - 1);
             };
 
-            // Left actions group
-            flowActionsLeft = new FlowLayoutPanel
+            flowToolbar = new FlowLayoutPanel
             {
-                Dock = DockStyle.Left,
-                AutoSize = true,
+                Dock = DockStyle.Fill,
                 FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
-                BackColor = PanelDark
+                WrapContents = true,
+                AutoScroll = false,
+                BackColor = PanelDark,
+                Padding = new Padding(10, 5, 10, 4)
             };
 
+            // 1. Start Button
             btnStart = new RoundedButton
             {
-                Text = "▶  เริ่มทำงาน (Start)",
-                Size = new Size(160, 40),
+                Text = "▶  เริ่มทำงาน",
+                Size = new Size(125, 34),
                 BaseColor = Success,
                 HoverColor = SuccessHover,
                 BorderColor = Color.FromArgb(40, 180, 120),
                 ForeColorNormal = Color.FromArgb(6, 24, 14),
-                Font = new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold),
-                Margin = new Padding(0, 0, 10, 0)
+                Font = new Font("Segoe UI Semibold", 9f, FontStyle.Bold),
+                Margin = new Padding(0, 0, 6, 4)
             };
             btnStart.Click += async (s, e) =>
             {
@@ -361,50 +368,102 @@ namespace ApibotWarZ.UI.Forms
                 }
             };
 
+            // 2. Stop Button
             btnStop = new RoundedButton
             {
-                Text = "■  หยุดทำงาน (Stop)",
-                Size = new Size(140, 40),
+                Text = "■  หยุด",
+                Size = new Size(85, 34),
                 BaseColor = Danger,
                 HoverColor = DangerHover,
                 BorderColor = Color.FromArgb(200, 70, 70),
                 ForeColorNormal = Color.White,
-                Font = new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold),
+                Font = new Font("Segoe UI Semibold", 9f, FontStyle.Bold),
                 Enabled = false,
-                Margin = new Padding(0, 0, 12, 0)
+                Margin = new Padding(0, 0, 6, 4)
             };
             btnStop.Click += (s, e) => StopBot();
 
-            // Custom Modern Threads Stepper Capsule
+            // 3. Operation Mode Capsule
+            var pnlModeCapsule = new Panel
+            {
+                Size = new Size(215, 34),
+                BackColor = CardDark,
+                Padding = new Padding(4, 3, 4, 3),
+                Margin = new Padding(0, 0, 6, 4)
+            };
+            pnlModeCapsule.Paint += (s, e) => DrawRoundedChip(e.Graphics, pnlModeCapsule, CardBorder);
+
+            var lblModeTitle = new Label
+            {
+                Text = "โหมด:",
+                Font = new Font("Segoe UI Semibold", 8.5f),
+                ForeColor = TextDim,
+                AutoSize = true,
+                Location = new Point(6, 8),
+                UseMnemonic = false
+            };
+
+            var cmbMode = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(20, 24, 38),
+                ForeColor = TextMain,
+                Font = new Font("Segoe UI Semibold", 8.5f),
+                Location = new Point(48, 5),
+                Size = new Size(160, 24)
+            };
+
+            cmbMode.Items.Add("🎁 ล็อกอิน + รับของ (ปกติ)");
+            cmbMode.Items.Add("🔑 ล็อกอินเก็บ Token");
+            cmbMode.Items.Add("⚡ ยิงรับของ 100 จอ (Token)");
+
+            if (_config.OperationMode == "harvest") cmbMode.SelectedIndex = 1;
+            else if (_config.OperationMode == "redeem_only") cmbMode.SelectedIndex = 2;
+            else cmbMode.SelectedIndex = 0;
+
+            cmbMode.SelectedIndexChanged += (s, e) =>
+            {
+                if (cmbMode.SelectedIndex == 1) _config.OperationMode = "harvest";
+                else if (cmbMode.SelectedIndex == 2) _config.OperationMode = "redeem_only";
+                else _config.OperationMode = "all";
+                ConfigManager.Save(_config);
+                RefreshTokensFromStorage(showLog: true);
+            };
+
+            pnlModeCapsule.Controls.Add(lblModeTitle);
+            pnlModeCapsule.Controls.Add(cmbMode);
+
+            // 4. Threads Stepper Capsule
             pnlThreadsCapsule = new Panel
             {
-                Size = new Size(330, 40),
+                Size = new Size(112, 34),
                 BackColor = CardDark,
-                Padding = new Padding(6, 4, 6, 4),
-                Margin = new Padding(0, 0, 10, 0)
+                Padding = new Padding(4, 3, 4, 3),
+                Margin = new Padding(0, 0, 6, 4)
             };
             pnlThreadsCapsule.Paint += (s, e) => DrawRoundedChip(e.Graphics, pnlThreadsCapsule, CardBorder);
 
             var lblThreadsTitle = new Label
             {
                 Text = "บอท:",
-                Font = new Font("Segoe UI Semibold", 9f),
+                Font = new Font("Segoe UI Semibold", 8.5f),
                 ForeColor = TextDim,
                 AutoSize = true,
-                Location = new Point(10, 11),
+                Location = new Point(6, 8),
                 UseMnemonic = false
             };
 
             btnThreadMinus = new RoundedButton
             {
                 Text = "–",
-                Size = new Size(28, 28),
-                Location = new Point(48, 6),
+                Size = new Size(22, 22),
+                Location = new Point(38, 6),
                 BaseColor = Color.FromArgb(34, 40, 60),
                 HoverColor = Color.FromArgb(45, 52, 78),
                 BorderColor = CardBorder,
-                CornerRadius = 6,
-                Font = new Font("Segoe UI", 10f, FontStyle.Bold),
+                CornerRadius = 4,
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
                 ForeColorNormal = TextMain
             };
             btnThreadMinus.Click += (s, e) =>
@@ -420,10 +479,10 @@ namespace ApibotWarZ.UI.Forms
             lblThreadCount = new Label
             {
                 Text = Math.Max(1, Math.Min(50, _config.BotThreads)).ToString(),
-                Size = new Size(30, 28),
-                Location = new Point(78, 6),
+                Size = new Size(24, 22),
+                Location = new Point(60, 6),
                 TextAlign = ContentAlignment.MiddleCenter,
-                Font = new Font("Segoe UI Semibold", 10.5f, FontStyle.Bold),
+                Font = new Font("Segoe UI Semibold", 9.5f, FontStyle.Bold),
                 ForeColor = Color.White,
                 UseMnemonic = false
             };
@@ -431,13 +490,13 @@ namespace ApibotWarZ.UI.Forms
             btnThreadPlus = new RoundedButton
             {
                 Text = "+",
-                Size = new Size(28, 28),
-                Location = new Point(110, 6),
+                Size = new Size(22, 22),
+                Location = new Point(84, 6),
                 BaseColor = Color.FromArgb(34, 40, 60),
                 HoverColor = Color.FromArgb(45, 52, 78),
                 BorderColor = CardBorder,
-                CornerRadius = 6,
-                Font = new Font("Segoe UI", 10f, FontStyle.Bold),
+                CornerRadius = 4,
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
                 ForeColorNormal = TextMain
             };
             btnThreadPlus.Click += (s, e) =>
@@ -450,14 +509,19 @@ namespace ApibotWarZ.UI.Forms
                 }
             };
 
-            // Custom Modern Captcha Toggle Button
+            pnlThreadsCapsule.Controls.Add(lblThreadsTitle);
+            pnlThreadsCapsule.Controls.Add(btnThreadMinus);
+            pnlThreadsCapsule.Controls.Add(lblThreadCount);
+            pnlThreadsCapsule.Controls.Add(btnThreadPlus);
+
+            // 5. Captcha Toggle Button
             btnToggleCaptcha = new RoundedButton
             {
-                Size = new Size(165, 28),
-                Location = new Point(152, 6),
+                Size = new Size(135, 34),
                 CornerRadius = 6,
-                Font = new Font("Segoe UI Semibold", 8.8f),
-                EnableBorder = true
+                Font = new Font("Segoe UI Semibold", 8.5f),
+                EnableBorder = true,
+                Margin = new Padding(0, 0, 8, 4)
             };
             UpdateCaptchaToggleButton();
             btnToggleCaptcha.Click += (s, e) =>
@@ -467,67 +531,31 @@ namespace ApibotWarZ.UI.Forms
                 UpdateCaptchaToggleButton();
             };
 
-            pnlThreadsCapsule.Controls.Add(lblThreadsTitle);
-            pnlThreadsCapsule.Controls.Add(btnThreadMinus);
-            pnlThreadsCapsule.Controls.Add(lblThreadCount);
-            pnlThreadsCapsule.Controls.Add(btnThreadPlus);
-            pnlThreadsCapsule.Controls.Add(btnToggleCaptcha);
-
-            flowActionsLeft.Controls.Add(btnStart);
-            flowActionsLeft.Controls.Add(btnStop);
-            flowActionsLeft.Controls.Add(pnlThreadsCapsule);
-
-            // Right actions group
-            flowActionsRight = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Right,
-                AutoSize = true,
-                FlowDirection = FlowDirection.RightToLeft,
-                WrapContents = false,
-                BackColor = PanelDark
-            };
-
-            btnClearLogs = new RoundedButton
-            {
-                Text = "ล้าง Log",
-                Size = new Size(90, 40),
-                BaseColor = CardDark,
-                HoverColor = Color.FromArgb(34, 40, 60),
-                BorderColor = CardBorder,
-                ForeColorNormal = TextDim,
-                Font = new Font("Segoe UI Semibold", 9f),
-                Margin = new Padding(8, 0, 0, 0)
-            };
-            btnClearLogs.Click += (s, e) =>
-            {
-                rtbLogs.Clear();
-                rtbLogs.ClearUndo();
-                _currentLogLines = 0;
-            };
-
+            // 6. Open Accounts
             btnOpenAccounts = new RoundedButton
             {
                 Text = "accounts.txt",
-                Size = new Size(125, 40),
+                Size = new Size(95, 34),
                 BaseColor = CardDark,
                 HoverColor = Color.FromArgb(34, 40, 60),
                 BorderColor = CardBorder,
                 ForeColorNormal = TextMain,
-                Font = new Font("Segoe UI Semibold", 9f),
-                Margin = new Padding(0, 0, 0, 0)
+                Font = new Font("Segoe UI Semibold", 8.5f),
+                Margin = new Padding(0, 0, 6, 4)
             };
             btnOpenAccounts.Click += (s, e) => OpenAccountsFile();
 
+            // 7. Import txt
             var btnImportTxt = new RoundedButton
             {
                 Text = "📁 ดึงไฟล์ .txt",
-                Size = new Size(125, 40),
+                Size = new Size(95, 34),
                 BaseColor = CardDark,
                 HoverColor = Color.FromArgb(34, 40, 60),
                 BorderColor = CardBorder,
                 ForeColorNormal = TextMain,
-                Font = new Font("Segoe UI Semibold", 9f),
-                Margin = new Padding(8, 0, 0, 0)
+                Font = new Font("Segoe UI Semibold", 8.5f),
+                Margin = new Padding(0, 0, 6, 4)
             };
             btnImportTxt.Click += (s, e) =>
             {
@@ -538,16 +566,17 @@ namespace ApibotWarZ.UI.Forms
                 }
             };
 
+            // 8. Chrome Profiles
             var btnChromeProfiles = new RoundedButton
             {
-                Text = "🌐 Chrome Profiles",
-                Size = new Size(150, 40),
+                Text = "🌐 Profiles",
+                Size = new Size(85, 34),
                 BaseColor = Color.FromArgb(32, 36, 62),
                 HoverColor = Color.FromArgb(45, 52, 90),
                 BorderColor = Color.FromArgb(99, 102, 241),
                 ForeColorNormal = Color.FromArgb(140, 200, 255),
-                Font = new Font("Segoe UI Semibold", 9f),
-                Margin = new Padding(8, 0, 0, 0)
+                Font = new Font("Segoe UI Semibold", 8.5f),
+                Margin = new Padding(0, 0, 6, 4)
             };
             btnChromeProfiles.Click += (s, e) =>
             {
@@ -555,28 +584,62 @@ namespace ApibotWarZ.UI.Forms
                 dlg.ShowDialog(this);
             };
 
+            // 9. Reset Queue
             btnResetQueue = new RoundedButton
             {
-                Text = "🔄 รีเซ็ตสถานะ",
-                Size = new Size(125, 40),
+                Text = "🔄 รีเซ็ต",
+                Size = new Size(78, 34),
                 BaseColor = CardDark,
                 HoverColor = Color.FromArgb(40, 36, 20),
                 BorderColor = CardBorder,
                 ForeColorNormal = Warning,
-                Font = new Font("Segoe UI Semibold", 9f),
-                Margin = new Padding(8, 0, 0, 0)
+                Font = new Font("Segoe UI Semibold", 8.5f),
+                Margin = new Padding(0, 0, 6, 4)
             };
             btnResetQueue.Click += (s, e) => ResetSelectedAccountsStatus();
 
-            flowActionsRight.Controls.Add(btnClearLogs);
-            flowActionsRight.Controls.Add(btnChromeProfiles);
-            flowActionsRight.Controls.Add(btnImportTxt);
-            flowActionsRight.Controls.Add(btnResetQueue);
-            flowActionsRight.Controls.Add(btnOpenAccounts);
+            // 10. Clear Logs
+            btnClearLogs = new RoundedButton
+            {
+                Text = "🗑️ ล้าง Log",
+                Size = new Size(75, 34),
+                BaseColor = CardDark,
+                HoverColor = Color.FromArgb(34, 40, 60),
+                BorderColor = CardBorder,
+                ForeColorNormal = TextDim,
+                Font = new Font("Segoe UI Semibold", 8.5f),
+                Margin = new Padding(0, 0, 0, 4)
+            };
+            btnClearLogs.Click += (s, e) =>
+            {
+                while (_logQueue.TryDequeue(out _)) { }
+                rtbLogs.Clear();
+                rtbLogs.ClearUndo();
+                _currentLogLines = 0;
+            };
 
-            panelActions.Controls.Add(flowActionsLeft);
-            panelActions.Controls.Add(flowActionsRight);
-            this.Controls.Add(panelActions);
+            flowToolbar.Controls.Add(btnStart);
+            flowToolbar.Controls.Add(btnStop);
+            flowToolbar.Controls.Add(pnlModeCapsule);
+            flowToolbar.Controls.Add(pnlThreadsCapsule);
+            flowToolbar.Controls.Add(btnToggleCaptcha);
+            flowToolbar.Controls.Add(btnOpenAccounts);
+            flowToolbar.Controls.Add(btnImportTxt);
+            flowToolbar.Controls.Add(btnChromeProfiles);
+            flowToolbar.Controls.Add(btnResetQueue);
+            flowToolbar.Controls.Add(btnClearLogs);
+
+            panelActions.Controls.Add(flowToolbar);
+
+            // Responsive Toolbar Resize (expands to 2 rows if screen width < 1140px)
+            this.Resize += (s, e) =>
+            {
+                if (panelActions != null)
+                {
+                    panelActions.Height = this.ClientSize.Width < 1140 ? 80 : 44;
+                }
+            };
+            panelActions.Height = this.ClientSize.Width < 1140 ? 80 : 44;
 
             // ═══════════════════════════════════════════
             //  4. MAIN SPLIT CONTAINER (Grid & Log)
@@ -585,10 +648,10 @@ namespace ApibotWarZ.UI.Forms
             {
                 Dock = DockStyle.Fill,
                 Orientation = Orientation.Vertical,
-                SplitterDistance = 450,
+                SplitterDistance = 640,
                 SplitterWidth = 6,
                 BackColor = BgDark,
-                Padding = new Padding(18, 10, 18, 14)
+                Padding = new Padding(12, 6, 12, 8)
             };
 
             // Left Side: Accounts Grid Container
@@ -607,9 +670,9 @@ namespace ApibotWarZ.UI.Forms
             pnlGridHeader = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 46,
+                Height = 42,
                 BackColor = CardDark,
-                Padding = new Padding(8, 7, 8, 7)
+                Padding = new Padding(8, 5, 8, 5)
             };
             pnlGridHeader.Paint += (s, e) =>
             {
@@ -620,40 +683,40 @@ namespace ApibotWarZ.UI.Forms
             btnTabAll = new RoundedButton
             {
                 Text = "📋 บัญชีทั้งหมด (0)",
-                Size = new Size(160, 32),
+                Size = new Size(150, 30),
                 Location = new Point(8, 6),
                 BaseColor = Color.FromArgb(36, 42, 64),
                 HoverColor = Color.FromArgb(46, 54, 80),
                 BorderColor = Accent,
                 ForeColorNormal = Color.White,
-                Font = new Font("Segoe UI Semibold", 9f, FontStyle.Bold)
+                Font = new Font("Segoe UI Semibold", 8.8f, FontStyle.Bold)
             };
             btnTabAll.Click += (s, e) => SwitchTab(false);
 
             btnTabFailed = new RoundedButton
             {
                 Text = "❌ บัญชีที่ผิดพลาด (0)",
-                Size = new Size(165, 32),
-                Location = new Point(174, 6),
+                Size = new Size(155, 30),
+                Location = new Point(164, 6),
                 BaseColor = CardDark,
                 HoverColor = Color.FromArgb(45, 26, 32),
                 BorderColor = CardBorder,
                 ForeColorNormal = TextDim,
-                Font = new Font("Segoe UI Semibold", 9f, FontStyle.Bold)
+                Font = new Font("Segoe UI Semibold", 8.8f, FontStyle.Bold)
             };
             btnTabFailed.Click += (s, e) => SwitchTab(true);
 
             btnRerunFailed = new RoundedButton
             {
                 Text = "⚡ รันเฉพาะไอดีที่ผิดพลาด",
-                Size = new Size(190, 32),
+                Size = new Size(175, 30),
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                Location = new Point(pnlGridHeader.Width - 200, 6),
+                Location = new Point(pnlGridHeader.Width - 185, 6),
                 BaseColor = Color.FromArgb(170, 40, 50),
                 HoverColor = Color.FromArgb(200, 50, 62),
                 BorderColor = Danger,
                 ForeColorNormal = Color.White,
-                Font = new Font("Segoe UI Semibold", 9f, FontStyle.Bold),
+                Font = new Font("Segoe UI Semibold", 8.8f, FontStyle.Bold),
                 Visible = false
             };
             btnRerunFailed.Click += async (s, e) => await RerunFailedAccountsAsync();
@@ -661,11 +724,11 @@ namespace ApibotWarZ.UI.Forms
             lblAccountsCount = new Label
             {
                 Text = "0 บัญชี",
-                Font = new Font("Segoe UI Semibold", 8.8f, FontStyle.Bold),
+                Font = new Font("Segoe UI Semibold", 8.5f, FontStyle.Bold),
                 ForeColor = Success,
                 AutoSize = true,
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                Location = new Point(pnlGridHeader.Width - 140, 13),
+                Location = new Point(pnlGridHeader.Width - 140, 12),
                 UseMnemonic = false
             };
 
@@ -710,29 +773,29 @@ namespace ApibotWarZ.UI.Forms
             var pnlLogHeader = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 36,
+                Height = 34,
                 BackColor = CardDark,
-                Padding = new Padding(12, 0, 12, 0)
+                Padding = new Padding(10, 0, 10, 0)
             };
 
             var lblLogTitle = new Label
             {
                 Text = "Live Console Logs & Network Events",
-                Font = new Font("Segoe UI Semibold", 9.2f, FontStyle.Bold),
+                Font = new Font("Segoe UI Semibold", 8.8f, FontStyle.Bold),
                 ForeColor = TextMain,
                 AutoSize = true,
-                Location = new Point(10, 9),
+                Location = new Point(8, 8),
                 UseMnemonic = false
             };
 
             var lblLogLimitHint = new Label
             {
                 Text = $"(จำกัด: {MaxLogLines} บรรทัด)",
-                Font = new Font("Segoe UI", 8.2f),
+                Font = new Font("Segoe UI", 8f),
                 ForeColor = TextMuted,
                 AutoSize = true,
                 Anchor = AnchorStyles.Top | AnchorStyles.Right,
-                Location = new Point(pnlLogHeader.Width - 125, 10),
+                Location = new Point(pnlLogHeader.Width - 120, 9),
                 UseMnemonic = false
             };
 
@@ -744,7 +807,7 @@ namespace ApibotWarZ.UI.Forms
                 Dock = DockStyle.Fill,
                 BackColor = Color.FromArgb(9, 11, 17),
                 ForeColor = Color.FromArgb(215, 222, 240),
-                Font = new Font("Consolas", 9.2f),
+                Font = new Font("Consolas", 9f),
                 BorderStyle = BorderStyle.None,
                 ReadOnly = true,
                 ScrollBars = RichTextBoxScrollBars.Vertical,
@@ -758,13 +821,11 @@ namespace ApibotWarZ.UI.Forms
             rtbLogs.BringToFront();
             splitMain.Panel2.Controls.Add(panelLogContainer);
 
+            // Top-to-bottom dock stacking order
             this.Controls.Add(splitMain);
-
-            // Dock stacking order (Top controls docked from top to bottom)
-            panelTop.SendToBack();
-            statsDashboard.SendToBack();
-            panelActions.SendToBack();
-            splitMain.BringToFront();
+            this.Controls.Add(panelActions);
+            this.Controls.Add(statsDashboard);
+            this.Controls.Add(panelTop);
         }
 
         private void UpdateCaptchaToggleButton()
@@ -887,26 +948,40 @@ namespace ApibotWarZ.UI.Forms
             _successCount = 0;
             _failCount = 0;
 
-            // Load saved state dictionary if exists
+            // Load saved state dictionary if exists (with .bak fallback for power cuts)
             var savedStates = new Dictionary<string, AccountStateItem>(StringComparer.OrdinalIgnoreCase);
+            string bakPath = statePath + ".bak";
+            List<AccountStateItem>? stateList = null;
+
             if (File.Exists(statePath))
             {
                 try
                 {
                     string json = File.ReadAllText(statePath);
-                    var stateList = JsonSerializer.Deserialize<List<AccountStateItem>>(json);
-                    if (stateList != null)
-                    {
-                        foreach (var item in stateList)
-                        {
-                            if (!string.IsNullOrEmpty(item.Username))
-                            {
-                                savedStates[item.Username] = item;
-                            }
-                        }
-                    }
+                    stateList = JsonSerializer.Deserialize<List<AccountStateItem>>(json);
                 }
                 catch { }
+            }
+
+            if (stateList == null && File.Exists(bakPath))
+            {
+                try
+                {
+                    string json = File.ReadAllText(bakPath);
+                    stateList = JsonSerializer.Deserialize<List<AccountStateItem>>(json);
+                }
+                catch { }
+            }
+
+            if (stateList != null)
+            {
+                foreach (var item in stateList)
+                {
+                    if (!string.IsNullOrEmpty(item.Username))
+                    {
+                        savedStates[item.Username] = item;
+                    }
+                }
             }
 
             if (File.Exists(accountsPath))
@@ -937,6 +1012,7 @@ namespace ApibotWarZ.UI.Forms
                                 if (!string.IsNullOrEmpty(state.Status)) acc.Status = state.Status;
                                 if (!string.IsNullOrEmpty(state.RegisteredAt)) acc.RegisteredAt = state.RegisteredAt;
                                 if (!string.IsNullOrEmpty(state.ResultDetail)) acc.ResultDetail = state.ResultDetail;
+                                if (!string.IsNullOrEmpty(state.SessionStatus)) acc.SessionStatus = state.SessionStatus;
                                 acc.IsSelected = state.IsSelected;
                             }
 
@@ -957,7 +1033,8 @@ namespace ApibotWarZ.UI.Forms
                                     Password = acc.Password,
                                     Status = acc.Status,
                                     RegisteredAt = acc.RegisteredAt,
-                                    ResultDetail = acc.ResultDetail
+                                    ResultDetail = acc.ResultDetail,
+                                    SessionStatus = acc.SessionStatus
                                 };
                                 _failedAccountsList.Add(failedAcc);
                                 _failedAccountMap[acc.Username] = failedAcc;
@@ -966,6 +1043,7 @@ namespace ApibotWarZ.UI.Forms
                     }
 
                     _failCount = _failedAccountsList.Count;
+                    RefreshTokensFromStorage(showLog: false);
                     UpdateDashboardStats();
                     UpdateTabBadges();
                     string stateMsg = _successCount > 0 ? $" (จำสถานะเดิมสำเร็จแล้ว {_successCount} บัญชี)" : "";
@@ -1057,7 +1135,14 @@ namespace ApibotWarZ.UI.Forms
             {
                 DataPropertyName = "Username",
                 HeaderText = "HOF ID (ไอดี)",
-                Width = 150
+                Width = 145
+            };
+            var colToken = new DataGridViewTextBoxColumn
+            {
+                DataPropertyName = "SessionStatus",
+                HeaderText = "🔑 Token",
+                Width = 95,
+                DefaultCellStyle = { Alignment = DataGridViewContentAlignment.MiddleCenter, Font = new Font("Segoe UI Semibold", 8.8f) }
             };
             var colStatus = new DataGridViewTextBoxColumn
             {
@@ -1082,7 +1167,7 @@ namespace ApibotWarZ.UI.Forms
                 DefaultCellStyle = { ForeColor = Color.FromArgb(200, 205, 220) }
             };
 
-            dgv.Columns.AddRange(colCheck, colIndex, colUsername, colStatus, colTime, colDetail);
+            dgv.Columns.AddRange(colCheck, colIndex, colUsername, colToken, colStatus, colTime, colDetail);
             dgv.DataSource = source;
 
             // Click header checkbox to toggle all selection
@@ -1344,9 +1429,23 @@ namespace ApibotWarZ.UI.Forms
                         e.CellStyle.BackColor = Color.FromArgb(28, 34, 54);
                     }
 
+                    if (dgv.Columns[e.ColumnIndex].DataPropertyName == "SessionStatus")
+                    {
+                        if (item.SessionStatus.Contains("มี Token") || item.SessionStatus.Contains("🟢") || item.SessionStatus.Contains("พร้อม"))
+                        {
+                            e.CellStyle.ForeColor = Color.FromArgb(52, 211, 153); // Emerald Green
+                            e.CellStyle.SelectionForeColor = Color.FromArgb(110, 231, 183);
+                        }
+                        else
+                        {
+                            e.CellStyle.ForeColor = Color.FromArgb(120, 130, 155);
+                            e.CellStyle.SelectionForeColor = Color.FromArgb(160, 170, 195);
+                        }
+                    }
+
                     if (dgv.Columns[e.ColumnIndex].DataPropertyName == "Status")
                     {
-                        if (item.Status.Contains("สำเร็จ"))
+                        if (item.Status.Contains("สำเร็จ") || item.Status.Contains("เก็บ Token"))
                         {
                             e.CellStyle.ForeColor = Success;
                             e.CellStyle.SelectionForeColor = SuccessHover;
@@ -1496,6 +1595,8 @@ namespace ApibotWarZ.UI.Forms
             {
                 string workDir = BotProcessManager.GetWorkingDir();
                 string statePath = Path.Combine(workDir, StateFileName);
+                string tmpPath = statePath + ".tmp";
+                string bakPath = statePath + ".bak";
 
                 var list = new List<AccountStateItem>();
                 lock (_accountsList)
@@ -1509,6 +1610,7 @@ namespace ApibotWarZ.UI.Forms
                             Status = acc.Status,
                             RegisteredAt = acc.RegisteredAt,
                             ResultDetail = acc.ResultDetail,
+                            SessionStatus = acc.SessionStatus,
                             IsSelected = acc.IsSelected
                         });
                     }
@@ -1520,7 +1622,15 @@ namespace ApibotWarZ.UI.Forms
                     Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
                 };
                 string json = JsonSerializer.Serialize(list, options);
-                File.WriteAllText(statePath, json);
+                File.WriteAllText(tmpPath, json, System.Text.Encoding.UTF8);
+
+                if (File.Exists(statePath))
+                {
+                    try { File.Copy(statePath, bakPath, true); } catch { }
+                    try { File.Delete(statePath); } catch { }
+                }
+
+                File.Move(tmpPath, statePath);
             }
             catch (Exception ex)
             {
@@ -1738,7 +1848,16 @@ namespace ApibotWarZ.UI.Forms
             int threads = _config.BotThreads;
             bool autoCaptcha = _config.AutoStartCaptcha;
 
-            bool started = await _botManager.StartAsync(threads, autoCaptcha, accountsFile);
+            bool started = await _botManager.StartAsync(
+                threads,
+                autoCaptcha,
+                accountsFile,
+                _config.BatchCooldownSeconds,
+                _config.DeepCooldownEvery,
+                _config.DeepCooldownSeconds,
+                _config.LimitCooldownSeconds,
+                _config.OperationMode
+            );
             if (!started)
             {
                 StopBot();
@@ -1761,81 +1880,99 @@ namespace ApibotWarZ.UI.Forms
             UpdateTabBadges();
         }
 
+        [DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int wMsg, int wParam, int lParam);
+        private const int WM_SETREDRAW = 0x000B;
+
         private void BotManager_OnLog(string message, Color color)
         {
-            if (this.InvokeRequired)
-            {
-                this.BeginInvoke(new Action(() => BotManager_OnLog(message, color)));
-                return;
-            }
-
-            AppendLog(message, color);
+            string time = DateTime.Now.ToString("HH:mm:ss");
+            _logQueue.Enqueue((message, color, time));
         }
 
-        // ═══════════════════════════════════════════
-        //  LOG BUFFER LIMIT (Prevents Memory & UI Lag)
-        // ═══════════════════════════════════════════
         private void AppendLog(string message, Color color)
         {
-            if (rtbLogs.IsDisposed) return;
-
             string time = DateTime.Now.ToString("HH:mm:ss");
+            _logQueue.Enqueue((message, color, time));
+        }
 
-            _currentLogLines++;
+        // ═══════════════════════════════════════════════════════════════════
+        //  NON-BLOCKING BATCH LOG FLUSH (Completely Prevents UI Thread Lock)
+        // ═══════════════════════════════════════════════════════════════════
+        private void FlushLogs(object? sender, EventArgs e)
+        {
+            if (rtbLogs == null || rtbLogs.IsDisposed || _logQueue.IsEmpty) return;
 
-            // ป้องกัน OutOfMemoryException: ตัดบรรทัดเก่าออกโดยใช้ตัวแปรนับแทน rtbLogs.Lines.Length (ไม่สร้าง Large String Array ซ้ำๆ)
-            if (_currentLogLines > MaxLogLines)
+            var batch = new List<(string message, Color color, string time)>();
+            while (_logQueue.TryDequeue(out var item) && batch.Count < 60)
             {
-                try
-                {
-                    int charIndex = rtbLogs.GetFirstCharIndexFromLine(TrimBatchLines);
-                    if (charIndex > 0)
-                    {
-                        rtbLogs.Select(0, charIndex);
-                        rtbLogs.SelectedText = "";
-                        rtbLogs.ClearUndo(); // ล้าง Undo history ของ native RichEdit ป้องกัน unmanaged memory leak
-                        _currentLogLines -= TrimBatchLines;
-                    }
-                    else
-                    {
-                        rtbLogs.Clear();
-                        rtbLogs.ClearUndo();
-                        _currentLogLines = 0;
-                    }
-                }
-                catch
-                {
-                    rtbLogs.Clear();
-                    rtbLogs.ClearUndo();
-                    _currentLogLines = 0;
-                }
+                batch.Add(item);
             }
+            if (batch.Count == 0) return;
 
-            rtbLogs.SelectionStart = rtbLogs.TextLength;
-            rtbLogs.SelectionLength = 0;
-
-            rtbLogs.SelectionColor = Color.FromArgb(90, 100, 125);
-            rtbLogs.AppendText($"[{time}] ");
-
-            rtbLogs.SelectionColor = color;
-            rtbLogs.AppendText(message + Environment.NewLine);
-            rtbLogs.ClearUndo();
-            rtbLogs.ScrollToCaret();
-
-            // กระตุ้น GC อัตโนมัติทุก 100 บรรทัด เพื่อคืน RAM อย่างสม่ำเสมอ
-            if (_currentLogLines % 100 == 0)
+            try
             {
-                GC.Collect(1, GCCollectionMode.Optimized, false);
+                SendMessage(rtbLogs.Handle, WM_SETREDRAW, 0, 0);
+
+                foreach (var (message, color, time) in batch)
+                {
+                    _currentLogLines++;
+
+                    if (_currentLogLines > MaxLogLines)
+                    {
+                        try
+                        {
+                            int charIndex = rtbLogs.GetFirstCharIndexFromLine(TrimBatchLines);
+                            if (charIndex > 0)
+                            {
+                                rtbLogs.Select(0, charIndex);
+                                rtbLogs.SelectedText = "";
+                                rtbLogs.ClearUndo();
+                                _currentLogLines -= TrimBatchLines;
+                            }
+                            else
+                            {
+                                rtbLogs.Clear();
+                                rtbLogs.ClearUndo();
+                                _currentLogLines = 0;
+                            }
+                        }
+                        catch
+                        {
+                            rtbLogs.Clear();
+                            rtbLogs.ClearUndo();
+                            _currentLogLines = 0;
+                        }
+                    }
+
+                    rtbLogs.SelectionStart = rtbLogs.TextLength;
+                    rtbLogs.SelectionLength = 0;
+
+                    rtbLogs.SelectionColor = Color.FromArgb(90, 100, 125);
+                    rtbLogs.AppendText($"[{time}] ");
+
+                    rtbLogs.SelectionColor = color;
+                    rtbLogs.AppendText(message + Environment.NewLine);
+                }
+
+                rtbLogs.ClearUndo();
+                rtbLogs.ScrollToCaret();
+            }
+            catch { }
+            finally
+            {
+                SendMessage(rtbLogs.Handle, WM_SETREDRAW, 1, 0);
+                rtbLogs.Invalidate();
             }
         }
 
         private void UpdateDashboardStats()
         {
-            int pendingCount = _accountsList.Count(a => !a.IsCompleted && a.Status == "รอคิว");
+            int tokenCount = _accountsList.Count(a => a.SessionStatus.Contains("มี Token") || a.SessionStatus.Contains("🟢"));
             statsDashboard.TotalAccounts = $"{_successCount} บัญชี";
             statsDashboard.Speed = $"{_failCount} บัญชี";
-            statsDashboard.VpnStatus = $"{pendingCount} บัญชี";
-            lblAccountsCount.Text = $"{_successCount} / {_accountsList.Count} สำเร็จ";
+            statsDashboard.TokenStatus = $"{tokenCount} บัญชี";
+            lblAccountsCount.Text = $"{_successCount} / {_accountsList.Count} สำเร็จ (🔑 Token: {tokenCount})";
         }
 
         private void BotManager_OnAccountRunning(string username)
@@ -1887,10 +2024,23 @@ namespace ApibotWarZ.UI.Forms
             }
 
             string resultMsg = string.IsNullOrWhiteSpace(detail) ? "เข้าสู่ระบบสำเร็จ" : detail;
+            string statusMsg = (_config.OperationMode == "harvest" || resultMsg.Contains("Token")) ? "🔑 เก็บ Token" : "✅ สำเร็จ";
+
+            bool reallyHasToken = false;
+            lock (_cachedTokenUsers)
+            {
+                if (detail.Contains("Token") || resultMsg.Contains("Token"))
+                {
+                    _cachedTokenUsers.Add(username);
+                }
+                reallyHasToken = _cachedTokenUsers.Contains(username);
+            }
+            string sessionTag = reallyHasToken ? "🟢 มี Token" : "⚪ ไม่มี";
 
             if (_accountMap.TryGetValue(username, out var acc))
             {
-                acc.Status = "✅ สำเร็จ";
+                acc.Status = statusMsg;
+                acc.SessionStatus = sessionTag;
                 acc.RegisteredAt = elapsed;
                 acc.ResultDetail = resultMsg;
             }
@@ -1901,7 +2051,8 @@ namespace ApibotWarZ.UI.Forms
                     Index = _accountsList.Count + 1,
                     Username = username,
                     Password = username,
-                    Status = "✅ สำเร็จ",
+                    Status = statusMsg,
+                    SessionStatus = sessionTag,
                     RegisteredAt = elapsed,
                     ResultDetail = resultMsg
                 };
@@ -2229,16 +2380,119 @@ namespace ApibotWarZ.UI.Forms
         [DllImport("user32.dll")]
         private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
+        private HashSet<string> GetCachedTokenUsernames()
+        {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                string workDir = BotProcessManager.GetWorkingDir();
+                string[] possibleFiles = new[]
+                {
+                    Path.Combine(workDir, "tokens.json"),
+                    Path.Combine(workDir, "tokens.json.bak"),
+                    Path.Combine(baseDir, "tokens.json"),
+                    Path.Combine(baseDir, "tokens.json.bak")
+                };
+
+                foreach (var file in possibleFiles)
+                {
+                    if (File.Exists(file))
+                    {
+                        try
+                        {
+                            string content = File.ReadAllText(file, System.Text.Encoding.UTF8);
+                            if (!string.IsNullOrWhiteSpace(content))
+                            {
+                                using var doc = System.Text.Json.JsonDocument.Parse(content);
+                                foreach (var prop in doc.RootElement.EnumerateObject())
+                                {
+                                    if (prop.Value.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                                        prop.Value.TryGetProperty("token", out var tok))
+                                    {
+                                        string? tokStr = tok.GetString();
+                                        if (!string.IsNullOrWhiteSpace(tokStr) &&
+                                            tokStr.Length > 50 &&
+                                            tokStr.StartsWith("eyJ") &&
+                                            tokStr.Count(c => c == '.') == 2)
+                                        {
+                                            result.Add(prop.Name.Trim());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+            return result;
+        }
+
+        public void RefreshTokensFromStorage(bool showLog = false)
+        {
+            var tokenUsers = GetCachedTokenUsernames();
+            lock (_cachedTokenUsers)
+            {
+                _cachedTokenUsers.Clear();
+                foreach (var u in tokenUsers) _cachedTokenUsers.Add(u);
+            }
+            int hasTokenCount = 0;
+
+            foreach (var acc in _accountsList)
+            {
+                if (tokenUsers.Contains(acc.Username))
+                {
+                    acc.SessionStatus = "🟢 มี Token";
+                    hasTokenCount++;
+                }
+                else
+                {
+                    acc.SessionStatus = "⚪ ไม่มี";
+                }
+            }
+
+            foreach (var failed in _failedAccountsList)
+            {
+                if (tokenUsers.Contains(failed.Username))
+                {
+                    failed.SessionStatus = "🟢 มี Token";
+                }
+                else
+                {
+                    failed.SessionStatus = "⚪ ไม่มี";
+                }
+            }
+
+            dgvAccounts?.Refresh();
+            dgvFailedAccounts?.Refresh();
+            UpdateDashboardStats();
+
+            if (showLog)
+            {
+                string modeText = _config.OperationMode switch
+                {
+                    "harvest" => "🔑 [ล็อกอินเก็บ Token]",
+                    "redeem_only" => "⚡ [ยิงรับของ 100 จอ (Token)]",
+                    _ => "🎁 [ล็อกอิน + รับของ (ปกติ)]"
+                };
+                AppendLog($"[โหมด] ปรับเป็น {modeText} — ตรวจพบบัญชีที่มี Token ในคลัง: {hasTokenCount}/{_accountsList.Count} บัญชี", Color.FromArgb(120, 200, 255));
+            }
+        }
+
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
             RegisterHotKey(this.Handle, HOTKEY_ID_F12, 0, VK_F12);
+            RefreshTokensFromStorage(showLog: false);
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             UnregisterHotKey(this.Handle, HOTKEY_ID_F12);
             StopBot();
+            SaveState();
             base.OnFormClosing(e);
         }
 
@@ -2260,7 +2514,7 @@ namespace ApibotWarZ.UI.Forms
     {
         private string _totalAccounts = "0 บัญชี";
         private string _speed = "0 บัญชี";
-        private string _vpnStatus = "0 บัญชี";
+        private string _tokenStatus = "0 บัญชี";
         private string _uptime = "00:00:00";
 
         public string TotalAccounts
@@ -2275,10 +2529,16 @@ namespace ApibotWarZ.UI.Forms
             set { _speed = value; Invalidate(); }
         }
 
+        public string TokenStatus
+        {
+            get => _tokenStatus;
+            set { _tokenStatus = value; Invalidate(); }
+        }
+
         public string VpnStatus
         {
-            get => _vpnStatus;
-            set { _vpnStatus = value; Invalidate(); }
+            get => _tokenStatus;
+            set { _tokenStatus = value; Invalidate(); }
         }
 
         public string Uptime
@@ -2303,24 +2563,24 @@ namespace ApibotWarZ.UI.Forms
             using var bgBrush = new SolidBrush(Parent?.BackColor ?? Color.FromArgb(12, 14, 22));
             g.FillRectangle(bgBrush, ClientRectangle);
 
-            int paddingX = 18;
-            int paddingY = 8;
-            int gap = 10;
-            int availableWidth = Width - (paddingX * 2) - (gap * 3);
-            int cardWidth = availableWidth / 4;
-            int cardHeight = Height - (paddingY * 2);
+            int paddingX = 12;
+            int paddingY = 4;
+            int gap = 8;
+            int availableWidth = Math.Max(100, Width - (paddingX * 2) - (gap * 3));
+            int cardWidth = Math.Max(60, availableWidth / 4);
+            int cardHeight = Math.Max(30, Height - (paddingY * 2));
 
-            var titles = new[] { "เข้าสู่ระบบสำเร็จ", "เข้าสู่ระบบไม่สำเร็จ", "รอดำเนินการ", "เวลาทำงาน (Uptime)" };
-            var values = new[] { _totalAccounts, _speed, _vpnStatus, _uptime };
+            var titles = new[] { "เข้าสู่ระบบสำเร็จ", "เข้าสู่ระบบไม่สำเร็จ", "🔑 มี Token ในคลัง", "เวลาทำงาน (Uptime)" };
+            var values = new[] { _totalAccounts, _speed, _tokenStatus, _uptime };
             var accents = new[] {
                 Color.FromArgb(52, 211, 153),  // Emerald (Success)
                 Color.FromArgb(248, 113, 113), // Red (Fail)
-                Color.FromArgb(56, 189, 248),  // Sky Blue (Total)
+                Color.FromArgb(168, 85, 247),  // Purple/Violet (Token Count)
                 Color.FromArgb(250, 204, 21)   // Yellow (Uptime)
             };
 
-            using var titleFont = new Font("Segoe UI Semibold", 8.8f, FontStyle.Bold);
-            using var valFont = new Font("Segoe UI", 13.5f, FontStyle.Bold);
+            using var titleFont = new Font("Segoe UI Semibold", 8f, FontStyle.Bold);
+            using var valFont = new Font("Segoe UI", 11.5f, FontStyle.Bold);
             using var cardBg = new SolidBrush(Color.FromArgb(24, 28, 42));
             using var cardBorder = new Pen(Color.FromArgb(38, 44, 66), 1f);
             using var titleBrush = new SolidBrush(Color.FromArgb(140, 148, 175));
@@ -2331,19 +2591,19 @@ namespace ApibotWarZ.UI.Forms
                 int x = paddingX + (i * (cardWidth + gap));
                 var cardRect = new Rectangle(x, paddingY, cardWidth, cardHeight);
 
-                using var path = GetRoundedPath(cardRect, 8);
+                using var path = GetRoundedPath(cardRect, 6);
                 g.FillPath(cardBg, path);
                 g.DrawPath(cardBorder, path);
 
                 // Top colored accent bar
                 using var accentPen = new Pen(accents[i], 2.5f);
-                g.DrawLine(accentPen, x + 10, paddingY + 1, x + cardWidth - 10, paddingY + 1);
+                g.DrawLine(accentPen, x + 8, paddingY + 1, x + cardWidth - 8, paddingY + 1);
 
                 // Title
-                g.DrawString(titles[i], titleFont, titleBrush, x + 14, paddingY + 12);
+                g.DrawString(titles[i], titleFont, titleBrush, x + 10, paddingY + 6);
 
                 // Value (large bold)
-                g.DrawString(values[i], valFont, valBrush, x + 14, paddingY + 34);
+                g.DrawString(values[i], valFont, valBrush, x + 10, paddingY + 23);
             }
         }
 
