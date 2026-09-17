@@ -120,6 +120,7 @@ namespace ApibotWarZ.UI.Forms
             _botManager.OnLog += BotManager_OnLog;
             _botManager.OnAccountRunning += BotManager_OnAccountRunning;
             _botManager.OnAccountSuccess += BotManager_OnAccountSuccess;
+            _botManager.OnTokenCaptured += BotManager_OnTokenCaptured;
             _botManager.OnAccountLimit += BotManager_OnAccountLimit;
             _botManager.OnAccountRetry += BotManager_OnAccountRetry;
             _botManager.OnAccountFail += BotManager_OnAccountFail;
@@ -1969,10 +1970,43 @@ namespace ApibotWarZ.UI.Forms
         private void UpdateDashboardStats()
         {
             int tokenCount = _accountsList.Count(a => a.SessionStatus.Contains("มี Token") || a.SessionStatus.Contains("🟢"));
+            lock (_cachedTokenUsers)
+            {
+                tokenCount = Math.Max(tokenCount, _cachedTokenUsers.Count);
+            }
             statsDashboard.TotalAccounts = $"{_successCount} บัญชี";
             statsDashboard.Speed = $"{_failCount} บัญชี";
             statsDashboard.TokenStatus = $"{tokenCount} บัญชี";
-            lblAccountsCount.Text = $"{_successCount} / {_accountsList.Count} สำเร็จ (🔑 Token: {tokenCount})";
+            lblAccountsCount.Text = $"{_successCount} / {_accountsList.Count} สำเร็จ (🔑 Token ในคลัง: {tokenCount} บัญชี)";
+        }
+
+        private void BotManager_OnTokenCaptured(string username)
+        {
+            if (this.InvokeRequired)
+            {
+                this.BeginInvoke(new Action(() => BotManager_OnTokenCaptured(username)));
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(username)) return;
+
+            lock (_cachedTokenUsers)
+            {
+                _cachedTokenUsers.Add(username);
+            }
+
+            if (_accountMap.TryGetValue(username, out var acc))
+            {
+                acc.SessionStatus = "🟢 มี Token";
+            }
+            if (_failedAccountMap.TryGetValue(username, out var failedAcc))
+            {
+                failedAcc.SessionStatus = "🟢 มี Token";
+            }
+
+            dgvAccounts?.Refresh();
+            dgvFailedAccounts?.Refresh();
+            UpdateDashboardStats();
         }
 
         private void BotManager_OnAccountRunning(string username)
@@ -2026,16 +2060,11 @@ namespace ApibotWarZ.UI.Forms
             string resultMsg = string.IsNullOrWhiteSpace(detail) ? "เข้าสู่ระบบสำเร็จ" : detail;
             string statusMsg = (_config.OperationMode == "harvest" || resultMsg.Contains("Token")) ? "🔑 เก็บ Token" : "✅ สำเร็จ";
 
-            bool reallyHasToken = false;
             lock (_cachedTokenUsers)
             {
-                if (detail.Contains("Token") || resultMsg.Contains("Token"))
-                {
-                    _cachedTokenUsers.Add(username);
-                }
-                reallyHasToken = _cachedTokenUsers.Contains(username);
+                _cachedTokenUsers.Add(username);
             }
-            string sessionTag = reallyHasToken ? "🟢 มี Token" : "⚪ ไม่มี";
+            string sessionTag = "🟢 มี Token";
 
             if (_accountMap.TryGetValue(username, out var acc))
             {
@@ -2241,19 +2270,27 @@ namespace ApibotWarZ.UI.Forms
                 return;
             }
 
-            statsDashboard.VpnStatus = $"IP: {ip}";
+            AppendLog($"[VPN] 🌐 ตรวจพบ IP ใหม่: {ip}", Color.FromArgb(80, 190, 255));
         }
 
+        private int _uiTokenSyncCounter = 0;
         private void UiTimer_Tick(object? sender, EventArgs e)
         {
             // 1. Update Real-time License Expiry Countdown
             UpdateLicenseBadgeDisplay();
 
-            // 2. Update Bot Uptime
+            // 2. Update Bot Uptime & Real-time Stats
             if (_uptimeTimer.IsRunning)
             {
                 var ts = _uptimeTimer.Elapsed;
                 statsDashboard.Uptime = $"{ts.Hours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}";
+
+                // 3. Periodic real-time storage check every 3 seconds while running
+                _uiTokenSyncCounter++;
+                if (_uiTokenSyncCounter % 3 == 0)
+                {
+                    RefreshTokensFromStorage(showLog: false);
+                }
             }
         }
 
@@ -2401,7 +2438,9 @@ namespace ApibotWarZ.UI.Forms
                     {
                         try
                         {
-                            string content = File.ReadAllText(file, System.Text.Encoding.UTF8);
+                            using var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                            using var sr = new StreamReader(fs, System.Text.Encoding.UTF8);
+                            string content = sr.ReadToEnd();
                             if (!string.IsNullOrWhiteSpace(content))
                             {
                                 using var doc = System.Text.Json.JsonDocument.Parse(content);
@@ -2537,8 +2576,8 @@ namespace ApibotWarZ.UI.Forms
 
         public string VpnStatus
         {
-            get => _tokenStatus;
-            set { _tokenStatus = value; Invalidate(); }
+            get => "";
+            set { /* No-op, preserves TokenStatus */ }
         }
 
         public string Uptime

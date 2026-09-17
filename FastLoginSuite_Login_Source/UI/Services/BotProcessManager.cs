@@ -29,6 +29,7 @@ namespace ApibotWarZ.UI.Services
         public event Action<string, string, string>? OnAccountLimit;
         public event Action<string, string, string>? OnAccountRetry;
         public event Action<string, string, string>? OnAccountFail;
+        public event Action<string>? OnTokenCaptured;
         public event Action<bool>? OnStateChanged;
         public event Action<string>? OnVpnChanged;
 
@@ -284,6 +285,7 @@ namespace ApibotWarZ.UI.Services
 
                 if (!string.IsNullOrEmpty(username))
                 {
+                    OnTokenCaptured?.Invoke(username);
                     OnAccountSuccess?.Invoke(username, time, detail);
                 }
             }
@@ -351,7 +353,7 @@ namespace ApibotWarZ.UI.Services
         private void ParseServerLog(string line)
         {
             Color color = Color.FromArgb(170, 175, 195);
-            if (line.Contains("🎉") || line.Contains("ผ่านด่านสำเร็จ"))
+            if (line.Contains("🎉") || line.Contains("ผ่านด่านสำเร็จ") || line.Contains("🔑 บันทึก Token"))
             {
                 color = Color.FromArgb(80, 210, 140);
             }
@@ -362,6 +364,20 @@ namespace ApibotWarZ.UI.Services
             else if (line.Contains("⚡") || line.Contains("Smart Click Engine"))
             {
                 color = Color.FromArgb(160, 130, 255);
+            }
+
+            // Real-time Token Capture detection from Server
+            if (line.Contains("บันทึก Token ที่ถูกต้องสำหรับ"))
+            {
+                var match = Regex.Match(line, @"บันทึก Token ที่ถูกต้องสำหรับ '([^']+)'");
+                if (match.Success)
+                {
+                    string username = match.Groups[1].Value.Trim();
+                    if (!string.IsNullOrEmpty(username))
+                    {
+                        OnTokenCaptured?.Invoke(username);
+                    }
+                }
             }
 
             EmitLog($"[Captcha] {line}", color);
