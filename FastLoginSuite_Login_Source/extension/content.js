@@ -340,13 +340,7 @@
   console.log(`[FastLogin] 🚀 Worker ${wid} พร้อมทำงานบนหน้าล็อกอิน กำลังดึงงานจากเซิร์ฟเวอร์...`);
   showHUD(`⚡ HOF Bot พร้อมทำงาน (Worker #${wid}) | กำลังรอรับคิวงาน...`, "#6366f1");
 
-  // Lock scroll position at (0, 0)
-  try {
-    window.scrollTo(0, 0);
-    const styleEl = document.createElement("style");
-    styleEl.textContent = "html, body { overflow: hidden !important; scroll-behavior: auto !important; }";
-    (document.head || document.documentElement).appendChild(styleEl);
-  } catch (e) {}
+
 
   // If already rate limited upon page load
   if (checkIfRateLimited()) {
