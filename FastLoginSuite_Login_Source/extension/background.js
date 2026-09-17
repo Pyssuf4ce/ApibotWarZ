@@ -139,5 +139,81 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === "HTTP_LOGIN") {
+    (async () => {
+      try {
+        const formData = new URLSearchParams();
+        if (msg.csrf_token) formData.append('_token', msg.csrf_token);
+        formData.append('username', msg.username);
+        formData.append('password', msg.password);
+        formData.append('cf-turnstile-response', msg.turnstile_token);
+
+        const targetUrl = msg.url || "https://passport.thehof.gg/hall-of-fame-web/login?theme=talesrunner-web";
+        console.log(`[FastLogin Background] 📡 Sending HTTP Login POST for '${msg.username}' to ${targetUrl}`);
+
+        const res = await fetch(targetUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+          },
+          body: formData.toString(),
+          redirect: "follow",
+          credentials: "include"
+        });
+
+        const status = res.status;
+        const resText = await res.text().catch(() => "");
+        const resUrl = res.url || "";
+
+        // Universal JWT Regex Pattern
+        const jwtRegex = /(eyJ[a-zA-Z0-9_-]{5,}\.eyJ[a-zA-Z0-9_-]{5,}\.[a-zA-Z0-9_-]+)/;
+        let token = "";
+
+        // 1. Search in Response Body
+        const matchBody = resText.match(jwtRegex);
+        if (matchBody && matchBody[1]) token = matchBody[1];
+
+        // 2. Search in all Cookies across the domain
+        if (!token) {
+          const cookies = await new Promise((resolve) => {
+            chrome.cookies.getAll({ domain: "thehof.gg" }, (dCookies) => {
+              chrome.cookies.getAll({ url: "https://member.thehof.gg" }, (mCookies) => {
+                resolve([...(dCookies || []), ...(mCookies || [])]);
+              });
+            });
+          });
+
+          for (const c of (cookies || [])) {
+            const m = (c.value || "").match(jwtRegex);
+            if (m && m[1]) {
+              token = m[1];
+              break;
+            }
+            if (c.name === "access_token" || c.name === "token" || c.name === "auth_token") {
+              if (c.value && c.value.startsWith("eyJ")) {
+                token = c.value;
+                break;
+              }
+            }
+          }
+        }
+
+        console.log(`[FastLogin Background] ✅ HTTP Login completed. Status: ${status} | Token Length: ${token ? token.length : 0}`);
+        sendResponse({
+          success: true,
+          status: status,
+          resUrl: resUrl,
+          resText: resText,
+          token: token
+        });
+      } catch (err) {
+        console.error("[FastLogin Background] ❌ HTTP_LOGIN error:", err);
+        sendResponse({ success: false, error: err.toString() });
+      }
+    })();
+    return true;
+  }
+
   return true;
 });

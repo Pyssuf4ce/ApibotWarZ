@@ -987,45 +987,24 @@ def do_login(req: LoginRequest):
                 if token:
                     save_account_token(req.username, token)
 
-                ext_redeem_status = res_data.get("redeem_status")
-                ext_items = res_data.get("items", "")
-                ext_detail = res_data.get("detail", "")
-
                 items_str = ""
                 detail_msg = "เข้าสู่ระบบสำเร็จ"
 
                 if req.mode == "harvest":
                     redeem_status = "skipped_harvest"
                     detail_msg = "🔑 บันทึก Token ลงคลังเรียบร้อย (โหมดดูด Token)"
-                elif ext_redeem_status in ("success", "already_claimed") and ext_detail:
-                    # Extension redeem สำเร็จหรือรับไปแล้ว — ใช้ผลจาก Extension
-                    redeem_status = ext_redeem_status
-                    items_str = ext_items
-                    detail_msg = ext_detail
-                elif ext_redeem_status == "failed" and ext_detail and token:
-                    # Extension redeem fail แต่มี token — server retry เอง
-                    print(f"[Req-{req_id}] 🔄 [{req.username}] Extension redeem ล้มเหลว กำลัง retry ผ่าน server...", flush=True)
-                    time.sleep(0.5)
-                    redeem_res = redeem_single_account(req.username, token, req.event_id)
-                    redeem_status = redeem_res.get("status")
-                    if redeem_status == "success":
-                        items_str = redeem_res.get("items", "")
-                        detail_msg = f"🎁 รับรางวัลสำเร็จ (retry): {items_str}"
-                    elif redeem_status == "already_claimed":
-                        detail_msg = "🟡 รับรางวัลไปแล้วก่อนหน้า"
-                    else:
-                        detail_msg = f"⚠️ รับรางวัล: {redeem_res.get('message', 'ไม่สำเร็จ')}"
                 elif token:
-                    # Extension ไม่ได้ redeem เลย (unknown) — server redeem เอง
-                    print(f"[Req-{req_id}] 🔄 [{req.username}] ไม่มีข้อมูล redeem จาก Extension กำลัง redeem ผ่าน server...", flush=True)
+                    # Centralized Redeem Pipeline via Python Server
                     redeem_res = redeem_single_account(req.username, token, req.event_id)
-                    redeem_status = redeem_res.get("status")
+                    redeem_status = redeem_res.get("status", "unknown")
                     if redeem_status == "success":
                         items_str = redeem_res.get("items", "")
                         detail_msg = f"🎁 รับรางวัลสำเร็จ: {items_str}"
                     elif redeem_status == "already_claimed":
+                        items_str = ""
                         detail_msg = "🟡 รับรางวัลไปแล้วก่อนหน้า"
                     else:
+                        items_str = ""
                         detail_msg = f"⚠️ รับรางวัล: {redeem_res.get('message', 'ไม่สำเร็จ')}"
                 else:
                     redeem_status = "success"

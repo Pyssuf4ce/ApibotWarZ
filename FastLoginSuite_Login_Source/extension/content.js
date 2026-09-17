@@ -38,7 +38,7 @@
   function setInputValue(el, value) {
     if (!el) return false;
     try {
-      el.focus();
+      try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
       const lastValue = el.value;
       el.value = value;
       const tracker = el._valueTracker;
@@ -124,6 +124,20 @@
     } catch (e) {}
 
     return "";
+  }
+
+  // Universal JWT Payload Decoder
+  function decodeJwt(tok) {
+    try {
+      if (!tok || typeof tok !== "string") return null;
+      const p = tok.split(".");
+      if (p.length !== 3) return null;
+      const b64 = p[1].replace(/-/g, '+').replace(/_/g, '/');
+      const pad = b64 + "=".repeat((4 - b64.length % 4) % 4);
+      return JSON.parse(atob(pad));
+    } catch (e) {
+      return null;
+    }
   }
 
   // ── FIX #3: Safe Promise wrapper (no double-resolve) ──
@@ -291,93 +305,17 @@
 
     console.log(`[FastLogin] Worker-${wid} | บัญชี: '${username}' | Token Length: ${token ? token.length : 0}`);
 
-    let redeemStatus = "unknown";
-    let itemsStr = "";
-    let detailMsg = "เข้าสู่ระบบสำเร็จ";
-
-    // ตรวจสอบโหมด: หากเป็นโหมดดูด Token อย่างเดียว (harvest) ให้ข้ามการยิงรับของ
-    const isHarvestMode = (EXT_CONFIG.mode === "harvest");
-    if (isHarvestMode) {
-      redeemStatus = "skipped_harvest";
-      detailMsg = "🔑 บันทึก Token ลงคลังเรียบร้อย (โหมดดูด Token)";
-      console.log(`[FastLogin] 🔑 บันทึก Token สำเร็จ — ข้ามการยิงรับของตามโหมด Harvest`);
-    } else {
-      // ยิง API รับรางวัลกิจกรรม — retry สูงสุด 2 รอบถ้า fail ครั้งแรก
-      const eventId = EXT_CONFIG.event_id;
-      const redeemUrl = `https://core-api.thehof.gg/me/events/${eventId}/redeem`;
-
-      for (let redeemAttempt = 0; redeemAttempt < 2; redeemAttempt++) {
-      if (redeemAttempt > 0) {
-        await new Promise(r => setTimeout(r, 1500)); // รอก่อน retry
-      }
-      try {
-        console.log(`[FastLogin] 🎁 กำลังยิงรับรางวัล (รอบ ${redeemAttempt + 1}):`, redeemUrl);
-        const headers = {
-          "Accept": "application/json, text/plain, */*",
-          "Content-Type": "application/json"
-        };
-        if (token) {
-          headers["Authorization"] = `Bearer ${token}`;
-        }
-        const r = await fetch(redeemUrl, {
-          method: "POST",
-          credentials: "include",
-          headers: headers
-        });
-
-        if (r.ok) {
-          const resJson = await r.json().catch(() => ({}));
-          const rawItems = resJson?.data?.bundle_transaction?.items || [];
-          const itemsList = [];
-          for (const itm of rawItems) {
-            const iName = itm?.item?.name || "Item";
-            const qty = itm?.quantity || 1;
-            itemsList.push(`${iName} x${qty}`);
-          }
-          itemsStr = itemsList.length > 0 ? itemsList.join(", ") : "รับไอเทมสำเร็จ";
-          redeemStatus = "success";
-          detailMsg = `🎁 รับรางวัลสำเร็จ: ${itemsStr}`;
-          console.log(`[FastLogin] 🎉 ${detailMsg}`);
-          break; // สำเร็จแล้ว ออกจาก loop retry
-        } else {
-          const errText = await r.text().catch(() => "");
-          let errJson = {};
-          try { errJson = JSON.parse(errText); } catch(e) {}
-          const msg = errJson.message || errText.slice(0, 80) || "";
-          const msgLower = msg.toLowerCase();
-          if (msg.includes("ไม่พบ") || msgLower.includes("already") || msg.includes("เคยรับ") || msgLower.includes("not found") || msgLower.includes("reward") || msgLower.includes("can't found")) {
-            redeemStatus = "already_claimed";
-            detailMsg = "🟡 รับรางวัลไปแล้วก่อนหน้า";
-            console.log(`[FastLogin] 🟡 ${detailMsg}`);
-            break; // already claimed — ไม่ต้อง retry
-          } else {
-            redeemStatus = "failed";
-            detailMsg = `⚠️ รับรางวัล: ${msg || `HTTP ${r.status}`}`;
-            console.warn(`[FastLogin] ⚠️ Redeem attempt ${redeemAttempt + 1} failed: ${detailMsg}`);
-            // ถ้าเป็น attempt สุดท้ายก็จบ ถ้ายังมีรอบ retry ต่อ
-          }
-        }
-      } catch (e) {
-        redeemStatus = "failed";
-        detailMsg = `⚠️ รับรางวัล: Network Error`;
-        console.error(`[FastLogin] Redeem attempt ${redeemAttempt + 1} error:`, e);
-      }
-    }
-    }
-
-    // ส่งผลลัพธ์กลับไปยัง Local Server (ผ่าน SW หรือ fetch)
+    // ส่ง Token กลับไปยัง Python Server ทันที (Python Server จะเป็นผู้ยิงรับของเองที่เดียว)
     await sendWorkerDone(wid, {
       status: "success",
       worker_id: parseInt(wid, 10),
       username: username,
       token: token,
-      redeem_status: redeemStatus,
-      items: itemsStr,
-      detail: detailMsg,
+      detail: "🔑 สกัด Token สำเร็จ",
       time: "0s"
     });
 
-    // ล้างเซสชันและนำหน้าต่างกลับไปรอคิวล็อกอินบัญชีถัดไป
+    // ล้างเซสชันและนำหน้าต่างกลับไปรอคิวล็อกอินบัญชีถัดไปทันที
     await cleanupAndReturnToLogin(wid);
     return;
   }
@@ -401,6 +339,14 @@
 
   console.log(`[FastLogin] 🚀 Worker ${wid} พร้อมทำงานบนหน้าล็อกอิน กำลังดึงงานจากเซิร์ฟเวอร์...`);
   showHUD(`⚡ HOF Bot พร้อมทำงาน (Worker #${wid}) | กำลังรอรับคิวงาน...`, "#6366f1");
+
+  // Lock scroll position at (0, 0)
+  try {
+    window.scrollTo(0, 0);
+    const styleEl = document.createElement("style");
+    styleEl.textContent = "html, body { overflow: hidden !important; scroll-behavior: auto !important; }";
+    (document.head || document.documentElement).appendChild(styleEl);
+  } catch (e) {}
 
   // If already rate limited upon page load
   if (checkIfRateLimited()) {
@@ -484,15 +430,11 @@
 
   function tryClickTurnstile() {
     try {
-      window.focus();
-
       // 1. Target all Cloudflare Turnstile wrappers & containers
       const cfWrappers = document.querySelectorAll(
         '.cf-turnstile, [data-sitekey], #cf-turnstile, div[id*="cf-"], div[class*="turnstile"], div.cf-turnstile-wrapper'
       );
       for (const wrap of cfWrappers) {
-        wrap.scrollIntoView({ behavior: 'instant', block: 'center' });
-        wrap.focus();
         wrap.click();
 
         const rect = wrap.getBoundingClientRect();
@@ -512,7 +454,6 @@
       // 2. Target Turnstile iframes and their parents
       const iframes = document.querySelectorAll('iframe[src*="challenges.cloudflare.com"], iframe[src*="turnstile"]');
       for (const ifr of iframes) {
-        ifr.focus();
         ifr.click();
         if (ifr.parentElement) {
           ifr.parentElement.click();
@@ -617,87 +558,151 @@
     return;
   }
 
-  // Step 3: Fill Username & Password into the form
-  console.log(`[FastLogin] ✍️ กำลังกรอกข้อมูลล็อกอินสำหรับ ${currentTask.username}...`);
+  // Step 3: Fast HTTP Login via Background Service Worker (CORS-Free & Instant)
+  console.log(`[FastLogin] 🚀 กำลังยิง HTTP Login ผ่าน Background Service Worker สำหรับ '${currentTask.username}'...`);
+  showHUD(`🚀 กำลังยิงเข้าสู่ระบบ (Background API): ${currentTask.username}...`, "#3b82f6");
 
-  let passInput = document.querySelector('input[type="password"]') ||
-                  document.querySelector('#password') || 
-                  document.querySelector('input[name="password"]') || 
-                  document.querySelector('input[autocomplete="current-password"]');
-
-  let userInput = document.querySelector('#username') || 
-                  document.querySelector('#hofId') || 
-                  document.querySelector('input[name="username"]') || 
-                  document.querySelector('input[name="account"]') || 
-                  document.querySelector('input[name="email"]') || 
-                  document.querySelector('input[autocomplete="username"]') ||
-                  document.querySelector('input[type="text"]') ||
-                  document.querySelector('input:not([type="password"]):not([type="hidden"]):not([type="checkbox"])');
-
-  if (!userInput || !passInput) {
-    console.error("[FastLogin] ❌ ไม่พบช่องกรอกข้อมูลใน DOM!");
-    const isLim = checkIfRateLimited();
-    await sendWorkerDone(wid, {
-      status: "failed",
-      worker_id: parseInt(wid, 10),
-      username: currentTask.username,
-      reason: isLim ? "ติด Limit IP (Too Many Requests 429)" : "ไม่พบช่องกรอกชื่อผู้ใช้หรือรหัสผ่าน",
-      is_limit: isLim,
-      time: `${((Date.now() - tStart) / 1000).toFixed(1)}s`
-    });
-    return;
+  // 1. ดึง CSRF Token (_token) จากหน้าเว็บ
+  let csrfToken = "";
+  const csrfEl = document.querySelector('input[name="_token"]') || document.querySelector('meta[name="csrf-token"]');
+  if (csrfEl) {
+    csrfToken = csrfEl.value || csrfEl.getAttribute("content") || "";
   }
 
-  setInputValue(userInput, currentTask.username);
-  setInputValue(passInput, currentTask.password);
-
-  await new Promise(r => setTimeout(r, 400));
-
-  // Step 4: Request Paced Submit Permit to guarantee NO 429 Collisions
-  console.log(`[FastLogin] 🚦 กำลังรอคิว Pacing ป้องกันชน Limit ก่อนกดยิงล็อกอิน (Worker-${wid})...`);
+  // 2. ขอคิว Pacing ป้องกันชน Limit ก่อนกดยิงล็อกอิน
   try {
     await safeSendMessage({ type: "ACQUIRE_SUBMIT", wid: wid }, 2000);
   } catch (e) {}
 
-  // Jitter delay 100-600ms เพิ่มเติม เพื่อกระจาย timing ป้องกัน 429/1015 แม้ผ่าน pacing แล้ว
-  await new Promise(r => setTimeout(r, 100 + Math.floor(Math.random() * 500)));
+  await new Promise(r => setTimeout(r, 100 + Math.floor(Math.random() * 300)));
 
-  console.log("[FastLogin] 🚀 กำลังคลิกปุ่มเข้าสู่ระบบ (Submit)...");
-  
-  // Search for Submit Button across all possible DOM patterns
-  let submitBtn = document.querySelector('button[type="submit"]') ||
-                  document.querySelector('.button-submit') || 
-                  document.querySelector('button.submit') ||
-                  document.querySelector('.btn-primary') ||
-                  document.querySelector('form button');
+  let formAction = "https://passport.thehof.gg/hall-of-fame-web/login?theme=talesrunner-web";
+  const formEl = document.querySelector('form');
+  if (formEl && formEl.action && formEl.action.startsWith("http")) {
+    formAction = formEl.action;
+  }
 
-  if (!submitBtn) {
-    const allBtns = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"], a.btn, div.button'));
-    for (const b of allBtns) {
-      const txt = (b.innerText || b.textContent || b.value || "").trim();
-      if (txt.includes("เข้าสู่ระบบ") || txt.includes("ล็อกอิน") || txt.includes("Login") || txt.includes("Sign in") || txt.includes("Submit") || txt.includes("ยืนยัน")) {
-        submitBtn = b;
-        break;
+  // 3. ส่งคำขอให้ Background.js ยิง HTTP POST เข้า API ล็อกอิน (ไม่ติด CORS)
+  let bgRes = null;
+  try {
+    bgRes = await safeSendMessage({
+      type: "HTTP_LOGIN",
+      wid: wid,
+      username: currentTask.username,
+      password: currentTask.password,
+      turnstile_token: turnstileToken,
+      csrf_token: csrfToken,
+      url: formAction
+    }, 12000);
+  } catch (e) {
+    console.warn("[FastLogin] Background HTTP_LOGIN call error:", e);
+  }
+
+  if (bgRes && bgRes.success) {
+    const resText = bgRes.resText || "";
+    const resLower = resText.toLowerCase();
+
+    // ก. ตรวจจับ Error รหัสผ่านผิด / ไม่พบบัญชี
+    if (resText.includes("รหัสผ่านไม่ถูกต้อง") || resText.includes("ไม่พบบัญชี") || resText.includes("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง") || resLower.includes("invalid credential") || resLower.includes("incorrect password")) {
+      console.warn(`[FastLogin] ❌ รหัสผ่านไม่ถูกต้องสำหรับ '${currentTask.username}'`);
+      await sendWorkerDone(wid, {
+        status: "failed",
+        worker_id: parseInt(wid, 10),
+        username: currentTask.username,
+        reason: "รหัสผ่านไม่ถูกต้อง / ไม่พบบัญชี",
+        time: `${((Date.now() - tStart) / 1000).toFixed(1)}s`
+      });
+      await cleanupAndReturnToLogin(wid);
+      return;
+    }
+
+    // ข. ตรวจจับ Rate Limit 429 / 1015
+    if (bgRes.status === 429 || resLower.includes("too many requests") || resLower.includes("error 1015") || resLower.includes("rate limit")) {
+      console.warn(`[FastLogin] ⚠️ ติด Limit IP (429/1015) หลังยิงล็อกอิน!`);
+      await sendWorkerDone(wid, {
+        status: "failed",
+        worker_id: parseInt(wid, 10),
+        username: currentTask.username,
+        reason: "ติด Limit IP (Too Many Requests 429)",
+        is_limit: true,
+        time: `${((Date.now() - tStart) / 1000).toFixed(1)}s`
+      });
+      await cleanupAndReturnToLogin(wid);
+      return;
+    }
+
+    // ค. ตรวจสอบและดึง Token ที่ได้รับ
+    let token = bgRes.token || "";
+    if (!token) {
+      for (let tAttempt = 0; tAttempt < 10; tAttempt++) {
+        const candidate = await extractToken();
+        if (candidate && candidate.length > 50) {
+          const payload = decodeJwt(candidate);
+          if (payload && (!payload.exp || Math.floor(Date.now() / 1000) <= payload.exp)) {
+            const tokenUser = (payload.username || payload.account_name || payload.account || "").toString().toLowerCase();
+            const curUser = (currentTask.username || "").toLowerCase();
+            if (!tokenUser || !curUser || tokenUser === curUser) {
+              token = candidate;
+              break;
+            }
+          }
+        }
+        await new Promise(r => setTimeout(r, 150));
       }
+    }
+
+    // ง. หากได้รับ Token เรียบร้อยแล้ว (สำเร็จทันทีใน ~1.5s ⚡)
+    if (token) {
+      console.log(`[FastLogin] ⚡ Background HTTP Login สำเร็จทันที! บัญชี: '${currentTask.username}' | Token Length: ${token.length}`);
+      showHUD(`🎉 เข้าสู่ระบบสำเร็จ (Background API): ${currentTask.username}`, "#10b981");
+
+      const elapsed = `${((Date.now() - tStart) / 1000).toFixed(1)}s`;
+      await sendWorkerDone(wid, {
+        status: "success",
+        worker_id: parseInt(wid, 10),
+        username: currentTask.username,
+        token: token,
+        detail: "🔑 สกัด Token สำเร็จ (Direct)",
+        time: elapsed
+      });
+
+      await cleanupAndReturnToLogin(wid);
+      return;
+    }
+
+    // หาก HTTP Login ยิงผ่านแล้วแต่ JWT Token รอประมวลผลบนหน้า Member
+    // ให้กระโดดไปหน้า Member Portal ทันทีโดยไม่ต้องพิมพ์หรือกดปุ่มใดๆ ใน DOM
+    if (bgRes.status === 200 || bgRes.status === 302 || (bgRes.resUrl && bgRes.resUrl.includes("member.thehof.gg"))) {
+      console.log("[FastLogin] 🚀 HTTP Login ผ่านในเบื้องหลัง ➔ กระโดดไปหน้า Member Portal ทันที (Zero DOM)");
+      showHUD(`🎉 ล็อกอินสำเร็จ (HTTP) ➔ กำลังไปยังหน้าสมาชิก...`, "#10b981");
+      window.location.replace("https://member.thehof.gg/");
+      return;
     }
   }
 
-  if (submitBtn) {
-    submitBtn.disabled = false;
-    submitBtn.removeAttribute('disabled');
-    submitBtn.focus();
-    submitBtn.click();
-    submitBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
-  } else if (userInput.form) {
-    userInput.form.submit();
-  } else if (passInput.form) {
-    passInput.form.submit();
+  // Step 4: Fallback หากยิง HTTP ไม่สำเร็จจริงๆ ให้ใช้วิธีกรอกผ่าน DOM Submit
+  console.log("[FastLogin] 🔄 Fallback to DOM Form submission...");
+  let passInput = document.querySelector('input[type="password"]') || document.querySelector('#password');
+  let userInput = document.querySelector('#username') || document.querySelector('#hofId') || document.querySelector('input[name="username"]');
+
+  if (userInput && passInput) {
+    setInputValue(userInput, currentTask.username);
+    setInputValue(passInput, currentTask.password);
+    await new Promise(r => setTimeout(r, 200));
+
+    let submitBtn = document.querySelector('button[type="submit"]') || document.querySelector('.btn-primary') || document.querySelector('form button');
+    if (submitBtn) {
+      submitBtn.click();
+    } else if (userInput.form) {
+      userInput.form.submit();
+    }
   }
 
-  // Step 5: Monitor login result (70 * 300ms = 21.0s)
-  for (let waitStep = 0; waitStep < 70; waitStep++) {
-    await new Promise(r => setTimeout(r, 300));
+  // Step 5: Monitor login result & navigation (60 * 250ms = 15.0s)
+  for (let waitStep = 0; waitStep < 60; waitStep++) {
+    await new Promise(r => setTimeout(r, 250));
 
+    // หากเปลี่ยนหน้าไปยังหน้าสมาชิกแล้ว Scenario A จะทำงานต่อทันที
     if (window.location.hostname.includes("member.thehof.gg") || !window.location.pathname.includes("/login")) {
       console.log("[FastLogin] เปลี่ยนเส้นทางไปยังหน้าสมาชิกแล้ว!");
       return; // Scenario A will handle extraction & redeem
@@ -713,11 +718,12 @@
         is_limit: true,
         time: `${((Date.now() - tStart) / 1000).toFixed(1)}s`
       });
+      await cleanupAndReturnToLogin(wid);
       return;
     }
 
     const text = document.body ? document.body.innerText : "";
-    if (text.includes("รหัสผ่านไม่ถูกต้อง") || text.includes("ไม่พบบัญชี") || text.includes("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง")) {
+    if (text.includes("รหัสผ่านไม่ถูกต้อง") || text.includes("ไม่พบบัญชี") || text.includes("ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง") || text.includes("Invalid credentials")) {
       console.warn("[FastLogin] Invalid credentials detected!");
       await sendWorkerDone(wid, {
         status: "failed",
@@ -726,7 +732,7 @@
         reason: "รหัสผ่านไม่ถูกต้อง / ไม่พบบัญชี",
         time: `${((Date.now() - tStart) / 1000).toFixed(1)}s`
       });
-      location.reload();
+      await cleanupAndReturnToLogin(wid);
       return;
     }
   }
@@ -742,5 +748,5 @@
     is_limit: isLimTimeout,
     time: `${((Date.now() - tStart) / 1000).toFixed(1)}s`
   });
-  location.reload();
+  await cleanupAndReturnToLogin(wid);
 })();
