@@ -4,8 +4,48 @@
 (async function() {
   console.log("[FastLogin] Content script loaded on:", window.location.href);
 
-  // ── Load config from background (event_id etc.) ──
-  let EXT_CONFIG = { event_id: "a297cbd7-c1c4-448f-9e9f-0f2a35d28ac3" };
+  // ── If running inside Cloudflare Turnstile Iframe ──
+  if (window.location.hostname.includes("challenges.cloudflare.com") || window.location.hostname.includes("cloudflare.com")) {
+    console.log("[FastLogin] 🛡️ Turnstile iframe content script active!");
+    function autoClickTurnstileIframe() {
+      try {
+        const checkbox = document.querySelector('input[type="checkbox"]') ||
+                         document.querySelector('.ctp-checkbox-label') ||
+                         document.querySelector('#challenge-stage') ||
+                         document.querySelector('label') ||
+                         document.querySelector('.spacer') ||
+                         document.body;
+        if (checkbox) {
+          try { checkbox.focus(); } catch(e){}
+          const rect = checkbox.getBoundingClientRect ? checkbox.getBoundingClientRect() : { left: 10, top: 10 };
+          const evtOpts = {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX: (rect.left || 0) + 15,
+            clientY: (rect.top || 0) + 15,
+            buttons: 1
+          };
+          checkbox.dispatchEvent(new MouseEvent('mouseover', evtOpts));
+          checkbox.dispatchEvent(new MouseEvent('mousemove', evtOpts));
+          checkbox.dispatchEvent(new MouseEvent('mousedown', evtOpts));
+          checkbox.dispatchEvent(new MouseEvent('mouseup', evtOpts));
+          checkbox.dispatchEvent(new MouseEvent('click', evtOpts));
+          if (typeof checkbox.click === 'function') checkbox.click();
+        }
+      } catch (e) {}
+    }
+    // Staggered native clicks directly inside the Turnstile iframe DOM
+    setTimeout(autoClickTurnstileIframe, 300);
+    setTimeout(autoClickTurnstileIframe, 800);
+    setTimeout(autoClickTurnstileIframe, 1500);
+    setTimeout(autoClickTurnstileIframe, 3000);
+    setTimeout(autoClickTurnstileIframe, 6000);
+    return; // Stop parent script execution inside the challenge iframe
+  }
+
+  // ── Load config from background (fixed wid, event_id etc.) ──
+  let EXT_CONFIG = { wid: 1, port: 5000, event_id: "a297cbd7-c1c4-448f-9e9f-0f2a35d28ac3" };
   try {
     const cfgRes = await new Promise((resolve) => {
       let resolved = false;
@@ -213,12 +253,18 @@
     }, 1000);
   }
 
-  // ── FIX #5: Enhanced Rate Limit & Hard Block Detection (No False Positives) ──
+  // ── FIX #5: Enhanced Rate Limit & Hard Block Detection (Multi-Vector) ──
   function checkIfRateLimited() {
     const title = (document.title || "").toLowerCase();
     const text = (document.body ? document.body.innerText : "").toLowerCase();
 
-    // Standard 429 / 1015 / WAF Block checks only
+    // 1. Cloudflare Standard Error Container check (#cf-error-details)
+    const cfError = document.getElementById("cf-error-details") || document.querySelector(".cf-error-details");
+    if (cfError && (cfError.innerText.includes("1015") || cfError.innerText.toLowerCase().includes("rate limit"))) {
+      return true;
+    }
+
+    // 2. Standard 429 / 1015 / WAF Block checks only
     if (title.includes("too many requests") || title.includes("error 1015") || title.includes("rate limited") || title.includes("429")) {
       return true;
     }
@@ -226,11 +272,31 @@
       return true;
     }
 
-    // Hard Cloudflare WAF block (Access Denied 1020/1006)
+    // 3. Hard Cloudflare WAF block (Access Denied 1020/1006)
     if (text.includes("access denied") && (text.includes("cloudflare") || text.includes("ray id"))) {
       return true;
     }
 
+    return false;
+  }
+
+  // ── Instant Captcha Timeout & Expired Detection (0.1s Fast Recovery) ──
+  function isTurnstileExpiredOrTimeout() {
+    try {
+      const pageText = (document.body ? document.body.innerText : "");
+      if (
+        pageText.includes("ไม่ได้ดำเนินการภายในเวลา") ||
+        pageText.includes("ดำเนินการภายในเวลาที่กำหนด") ||
+        pageText.includes("session expired") ||
+        pageText.includes("challenge expired")
+      ) {
+        return true;
+      }
+      const expiredEl = document.querySelector('[data-state="expired"]') ||
+                        document.querySelector('[data-state="error"]') ||
+                        document.querySelector('.cf-turnstile[data-expired="true"]');
+      if (expiredEl) return true;
+    } catch (e) {}
     return false;
   }
 
@@ -241,12 +307,13 @@
                        (window.location.hostname.includes("thehof.gg") && !window.location.pathname.includes("/login"));
 
   if (isMemberPage) {
-    // อ่านข้อมูล Worker & Username จาก chrome.storage.local
-    let wid = "1";
+    // อ่านข้อมูล Worker & Username จาก EXT_CONFIG และ chrome.storage.local
+    let wid = (EXT_CONFIG && EXT_CONFIG.wid) ? EXT_CONFIG.wid.toString() : "1";
     let username = "";
     try {
       const stored = await chrome.storage.local.get(["fastlogin_wid", "fastlogin_user"]);
       if (stored.fastlogin_wid) wid = stored.fastlogin_wid.toString();
+      else if (EXT_CONFIG && EXT_CONFIG.wid) wid = EXT_CONFIG.wid.toString();
       if (stored.fastlogin_user) username = stored.fastlogin_user;
     } catch (e) {}
 
@@ -323,24 +390,25 @@
   // ══════════════════════════════════════════════════════════════════
   //  SCENARIO B: On passport.thehof.gg (Login Page)
   // ══════════════════════════════════════════════════════════════════
-  let wid = null;
-  const hashMatch = window.location.hash.match(/wid=(\d+)/);
-  if (hashMatch) {
-    wid = hashMatch[1];
-    try { await chrome.storage.local.set({ fastlogin_wid: wid }); } catch (e) {}
-  } else {
+  let wid = (EXT_CONFIG && EXT_CONFIG.wid) ? EXT_CONFIG.wid.toString() : null;
+  if (!wid) {
+    const hashMatch = window.location.hash.match(/wid=(\d+)/);
+    if (hashMatch) {
+      wid = hashMatch[1];
+    }
+  }
+  if (!wid) {
     try {
       const res = await chrome.storage.local.get("fastlogin_wid");
-      wid = res.fastlogin_wid || "1";
+      wid = res.fastlogin_wid ? res.fastlogin_wid.toString() : "1";
     } catch (e) {
       wid = "1";
     }
   }
+  try { await chrome.storage.local.set({ fastlogin_wid: wid }); } catch (e) {}
 
   console.log(`[FastLogin] 🚀 Worker ${wid} พร้อมทำงานบนหน้าล็อกอิน กำลังดึงงานจากเซิร์ฟเวอร์...`);
   showHUD(`⚡ HOF Bot พร้อมทำงาน (Worker #${wid}) | กำลังรอรับคิวงาน...`, "#6366f1");
-
-
 
   // If already rate limited upon page load
   if (checkIfRateLimited()) {
@@ -422,15 +490,48 @@
     return null;
   }
 
-  function tryClickTurnstile() {
+  function preciseClickTurnstile() {
     try {
-      // 1. Target all Cloudflare Turnstile wrappers & containers
+      window.focus();
+
+      // 1. Target all Cloudflare Turnstile iframes and dispatch native mouse click directly on the checkbox coordinate
+      const iframes = document.querySelectorAll('iframe[src*="challenges.cloudflare.com"], iframe[src*="turnstile"]');
+      for (const ifr of iframes) {
+        try { ifr.focus(); } catch (e) {}
+        const rect = ifr.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          // Standard Cloudflare Checkbox coordinate: left padding ~28px, vertically centered
+          const cx = rect.left + Math.min(30, rect.width / 4);
+          const cy = rect.top + (rect.height / 2);
+          const evtOpts = {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX: cx,
+            clientY: cy,
+            screenX: (window.screenX || 0) + cx,
+            screenY: (window.screenY || 0) + cy,
+            buttons: 1
+          };
+
+          ifr.dispatchEvent(new MouseEvent('mouseover', evtOpts));
+          ifr.dispatchEvent(new MouseEvent('mouseenter', evtOpts));
+          ifr.dispatchEvent(new MouseEvent('mousemove', evtOpts));
+          ifr.dispatchEvent(new MouseEvent('mousedown', evtOpts));
+          ifr.dispatchEvent(new MouseEvent('mouseup', evtOpts));
+          ifr.dispatchEvent(new MouseEvent('click', evtOpts));
+
+          if (ifr.parentElement) {
+            ifr.parentElement.dispatchEvent(new MouseEvent('click', evtOpts));
+          }
+        }
+      }
+
+      // 2. Target Turnstile wrappers & containers
       const cfWrappers = document.querySelectorAll(
         '.cf-turnstile, [data-sitekey], #cf-turnstile, div[id*="cf-"], div[class*="turnstile"], div.cf-turnstile-wrapper'
       );
       for (const wrap of cfWrappers) {
-        wrap.click();
-
         const rect = wrap.getBoundingClientRect();
         if (rect.width > 0 && rect.height > 0) {
           const cx = rect.left + Math.min(30, rect.width / 2);
@@ -444,25 +545,9 @@
           wrap.dispatchEvent(new MouseEvent('click', evtOpts));
         }
       }
-
-      // 2. Target Turnstile iframes and their parents
-      const iframes = document.querySelectorAll('iframe[src*="challenges.cloudflare.com"], iframe[src*="turnstile"]');
-      for (const ifr of iframes) {
-        ifr.click();
-        if (ifr.parentElement) {
-          ifr.parentElement.click();
-          const pRect = ifr.parentElement.getBoundingClientRect();
-          if (pRect.width > 0 && pRect.height > 0) {
-            ifr.parentElement.dispatchEvent(new MouseEvent('click', {
-              bubbles: true,
-              cancelable: true,
-              clientX: pRect.left + 25,
-              clientY: pRect.top + 25
-            }));
-          }
-        }
-      }
+      return true;
     } catch (e) {}
+    return false;
   }
 
   function tryResetTurnstile() {
@@ -500,14 +585,31 @@
       break;
     }
 
+    // Instant Check: หากหน้าเว็บหมดอายุ ("คุณไม่ได้ดำเนินการภายในเวลาที่กำหนด") ให้รีเฟรชหน้าใหม่ทันทีใน 0.1s
+    if (isTurnstileExpiredOrTimeout()) {
+      console.warn("[FastLogin] ⚠️ ตรวจพบข้อความ 'ไม่ได้ดำเนินการภายในเวลาที่กำหนด' ➔ Hard Refresh หน้าเว็บทันที");
+      showHUD("🔄 Captcha หมดอายุ ➔ รีเฟรชหน้าเว็บทันที...", "#f59e0b");
+      try {
+        await safeSendMessage({ type: "HARD_PURGE_SESSION" }, 800);
+        sessionStorage.clear();
+        localStorage.clear();
+      } catch (e) {}
+      window.location.replace(`https://passport.thehof.gg/hall-of-fame-web/login?_t=${Date.now()}#wid=${wid}`);
+      return;
+    }
+
     // Natural human mouse movement every 500ms
     if (step % 2 === 0) {
       simulateHumanMouse();
     }
 
-    // Gentle click / reset triggers at 2s and 6s
-    if (step === 8 || step === 24) {
-      tryClickTurnstile();
+    // Precise Coordinate Click for Multi-threading background windows at step 4 (1s), 10 (2.5s), 20 (5s), 36 (9s)
+    if (step === 4 || step === 10 || step === 20 || step === 36) {
+      preciseClickTurnstile();
+    }
+
+    // Gentle Auto-Reset if stuck spinning at step 24 (6s) or 48 (12s)
+    if (step === 24 || step === 48) {
       tryResetTurnstile();
     }
 

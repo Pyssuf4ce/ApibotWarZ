@@ -1,0 +1,1821 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @keyframes pulse-glow {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(1.15); }
+    }
+    .pulse-dot { animation: pulse-glow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    
+    /* Strict Tab Display Control */
+    .tab-content { display: none !important; }
+    .tab-content.active { display: flex !important; flex-direction: column; flex: 1 1 0%; min-height: 0; }
+    
+    html, body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+    body {
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    input, textarea {
+      user-select: text;
+      -webkit-user-select: text;
+    }
+
+    /* Excel-style high performance active row highlight */
+    .account-row {
+      transition: background-color 0.05s ease;
+    }
+    .account-row.row-selected {
+      background-color: rgba(67, 56, 202, 0.38) !important;
+    }
+    .account-row.row-selected:hover {
+      background-color: rgba(79, 70, 229, 0.52) !important;
+    }
+  </style>
+</head>
+<body class="bg-[#0b0f19] text-slate-100 antialiased font-sans flex flex-col h-screen w-screen overflow-hidden select-none">
+
+  <!-- Main App Shell -->
+  <div class="w-full h-full flex flex-col bg-[#0f172a] shadow-2xl overflow-hidden backdrop-blur-xl">
+    
+    <!-- Top Header Bar with Navigation Tabs -->
+    <header class="flex flex-wrap items-center justify-between px-5 py-3 border-b border-slate-800 bg-[#090d16] gap-3 flex-shrink-0">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 via-violet-600 to-purple-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+          <span class="text-white text-lg font-black">⚡</span>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 id="app-title" class="text-sm font-bold tracking-wide text-white">FastLogin Suite</h1>
+            <span id="app-version" class="px-2 py-0.5 text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-full">v2.0 Pro</span>
+          </div>
+          <p class="text-[11px] text-slate-400">High-Performance Multi-Tab Auto Login Engine</p>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <nav class="flex items-center bg-slate-900/90 p-1 rounded-xl border border-slate-800 text-xs gap-1">
+        <button onclick="switchTab('dashboard')" id="tab-btn-dashboard" class="tab-btn px-3 py-1.5 rounded-lg font-medium text-white bg-indigo-600 shadow-sm transition">
+          📊 หน้าหลัก
+        </button>
+        <button onclick="switchTab('settings')" id="tab-btn-settings" class="tab-btn px-3 py-1.5 rounded-lg font-medium text-slate-400 hover:text-white transition">
+          ⚙️ ตั้งค่าระบบ
+        </button>
+        <button onclick="switchTab('vault')" id="tab-btn-vault" class="tab-btn px-3 py-1.5 rounded-lg font-medium text-slate-400 hover:text-white transition">
+          🔑 คลัง Token <span id="nav-token-count" class="text-indigo-400 font-bold">(0)</span>
+        </button>
+        <button onclick="switchTab('logs')" id="tab-btn-logs" class="tab-btn px-3 py-1.5 rounded-lg font-medium text-slate-400 hover:text-white transition">
+          📜 Live Logs
+        </button>
+      </nav>
+
+      <!-- License & HWID Badges -->
+      <div class="flex items-center gap-2">
+        <button onclick="copyHwid()" id="hwid-badge" class="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-slate-900 border border-indigo-500/30 text-[11px] text-indigo-300 hover:bg-indigo-950/40 transition">
+          <span>HWID: <strong id="hwid-val">กำลังโหลด...</strong></span>
+        </button>
+        <div id="license-badge" class="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-950/40 border border-emerald-500/30 text-[11px] text-emerald-300">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></span>
+          <span id="license-val">สิทธิ์: กำลังตรวจสอบ...</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- ========================================== -->
+    <!--  TAB 1: MAIN DASHBOARD                     -->
+    <!-- ========================================== -->
+    <div id="tab-dashboard" class="tab-content active">
+      
+      <!-- Stats Dashboard (4 Cards) -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 bg-[#0d1322]/50 border-b border-slate-800/60 flex-shrink-0">
+        <!-- Card 1: Success -->
+        <div class="p-3.5 rounded-xl bg-slate-900/90 border border-emerald-500/20 shadow-sm relative overflow-hidden group hover:border-emerald-500/40 transition">
+          <div class="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-emerald-500 to-teal-400"></div>
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-medium text-slate-400">เข้าสู่ระบบสำเร็จ</span>
+            <span class="text-xs">✅</span>
+          </div>
+          <div class="mt-1 flex items-baseline gap-1.5">
+            <span id="stat-success" class="text-xl font-extrabold text-emerald-400">0</span>
+            <span class="text-[11px] text-slate-500">บัญชี</span>
+          </div>
+        </div>
+
+        <!-- Card 2: Failed -->
+        <div class="p-3.5 rounded-xl bg-slate-900/90 border border-rose-500/20 shadow-sm relative overflow-hidden group hover:border-rose-500/40 transition">
+          <div class="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-rose-500 to-red-400"></div>
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-medium text-slate-400">เข้าสู่ระบบไม่สำเร็จ</span>
+            <span class="text-xs">❌</span>
+          </div>
+          <div class="mt-1 flex items-baseline gap-1.5">
+            <span id="stat-failed" class="text-xl font-extrabold text-rose-400">0</span>
+            <span class="text-[11px] text-slate-500">บัญชี</span>
+          </div>
+        </div>
+
+        <!-- Card 3: Token Vault -->
+        <div class="p-3.5 rounded-xl bg-slate-900/90 border border-violet-500/20 shadow-sm relative overflow-hidden group hover:border-violet-500/40 transition">
+          <div class="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-violet-500 to-purple-400"></div>
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-medium text-slate-400">🔑 Token ในคลัง</span>
+            <span id="stat-token-pct" class="text-xs text-violet-400">0%</span>
+          </div>
+          <div class="mt-1 flex items-baseline gap-1.5">
+            <span id="stat-token" class="text-xl font-extrabold text-violet-300">0</span>
+            <span class="text-[11px] text-slate-500">บัญชี</span>
+          </div>
+        </div>
+
+        <!-- Card 4: Speed / Uptime -->
+        <div class="p-3.5 rounded-xl bg-slate-900/90 border border-amber-500/20 shadow-sm relative overflow-hidden group hover:border-amber-500/40 transition">
+          <div class="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-amber-500 to-yellow-400"></div>
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-medium text-slate-400">เวลาทำงาน (Uptime)</span>
+            <span class="text-xs">⏱️</span>
+          </div>
+          <div class="mt-1 flex items-baseline gap-1.5">
+            <span id="stat-uptime" class="text-xl font-extrabold text-amber-300">00:00:00</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Control Toolbar -->
+      <div class="p-3 flex flex-wrap items-center justify-between gap-3 bg-[#0a0e1a]/80 border-b border-slate-800 flex-shrink-0">
+        <div class="flex flex-wrap items-center gap-2">
+          <!-- Start / Stop -->
+          <button id="btn-start" onclick="sendAction('START_BOT')" class="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg shadow-emerald-600/30 flex items-center gap-1.5 transition active:scale-95">
+            <span>▶</span> <span id="btn-start-text">เริ่มทำงาน</span>
+          </button>
+          <button id="btn-stop" onclick="sendAction('STOP_BOT')" disabled class="px-3 py-2 rounded-xl bg-slate-800/80 hover:bg-rose-950/60 hover:text-rose-400 hover:border-rose-500/40 border border-slate-700 text-slate-400 text-xs font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed">
+            ⏹ หยุด
+          </button>
+          
+          <!-- Threads Stepper -->
+          <div class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs">
+            <span class="text-slate-400">🧵 บอท:</span>
+            <button onclick="changeThread(-1)" class="w-5 h-5 flex items-center justify-center rounded bg-slate-800 text-slate-300 hover:bg-slate-700">-</button>
+            <span id="thread-val" class="font-bold text-indigo-400 w-5 text-center">5</span>
+            <button onclick="changeThread(1)" class="w-5 h-5 flex items-center justify-center rounded bg-slate-800 text-slate-300 hover:bg-slate-700">+</button>
+          </div>
+
+          <!-- Auto Captcha Toggle -->
+          <button id="btn-captcha-toggle" onclick="toggleCaptcha()" class="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300 hover:bg-slate-800 transition">
+            <span id="captcha-toggle-text">● Captcha: ON</span>
+          </button>
+
+          <!-- Accounts File -->
+          <button onclick="sendAction('OPEN_ACCOUNTS')" class="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300 hover:bg-slate-800 transition">
+            📄 accounts.txt
+          </button>
+
+          <!-- Import txt -->
+          <button onclick="sendAction('IMPORT_ACCOUNTS')" class="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300 hover:bg-slate-800 transition">
+            📁 ดึงไฟล์ .txt
+          </button>
+
+          <!-- Profiles -->
+          <button onclick="openProfilesModal()" class="px-3 py-1.5 rounded-xl bg-slate-900 border border-indigo-500/30 text-xs text-indigo-300 hover:bg-indigo-950/40 transition">
+            🌐 Profiles
+          </button>
+
+          <!-- Reset Queue -->
+          <button onclick="sendAction('RESET_ACCOUNTS')" class="px-3 py-1.5 rounded-xl bg-slate-900 border border-amber-500/30 text-xs text-amber-400 hover:bg-amber-950/30 transition">
+            🔄 รีเซ็ต
+          </button>
+
+          <!-- Range Run Controls -->
+          <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-900 border border-slate-800 text-xs shadow-inner">
+            <span class="text-slate-400 font-medium">🎯 ช่วง:</span>
+            <input type="number" id="tb-range-start" min="1" placeholder="1" class="w-14 px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-center font-bold text-indigo-400 text-xs focus:outline-none focus:border-indigo-500">
+            <span class="text-slate-500 font-bold">-</span>
+            <input type="number" id="tb-range-end" min="1" placeholder="50" class="w-14 px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-center font-bold text-indigo-400 text-xs focus:outline-none focus:border-indigo-500">
+            <button onclick="executeToolbarRangeRun()" class="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center gap-1 transition shadow-sm active:scale-95">
+              <span>▶</span> <span>รันช่วงนี้</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Search and Filters -->
+        <div class="flex items-center gap-2 flex-1 max-w-md justify-end">
+          <div class="relative w-full max-w-xs">
+            <span class="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-slate-500 text-xs">🔍</span>
+            <input type="text" id="search-input" oninput="onSearchInput()" placeholder="ค้นหาไอดี / ผลลัพธ์..." 
+                   class="w-full pl-8 pr-3 py-1.5 bg-slate-900 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition">
+          </div>
+          <button onclick="setFilter('all')" id="flt-all" class="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white transition">ทั้งหมด</button>
+          <button onclick="setFilter('token')" id="flt-token" class="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-400 hover:bg-slate-700 transition">มี Token</button>
+          <button onclick="setFilter('fail')" id="flt-fail" class="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-400 hover:bg-slate-700 transition">ล้มเหลว</button>
+        </div>
+      </div>
+
+      <!-- Data Table with High-Speed Excel-Grade Drag Selection -->
+      <div id="table-scroll-container" class="flex-1 overflow-x-auto overflow-y-auto min-h-0 bg-[#0c101c] relative">
+        <table id="accounts-table" class="w-full text-left text-xs border-collapse">
+          <thead class="sticky top-0 bg-[#090d16] text-slate-400 border-b border-slate-800 z-10 shadow-sm select-none">
+            <tr>
+              <th class="py-2.5 px-3 w-10 text-center"><input type="checkbox" id="check-all" onchange="toggleSelectAll(this.checked)" checked class="rounded bg-slate-800 border-slate-700 text-indigo-600 cursor-pointer"></th>
+              <th class="py-2.5 px-2 w-12 text-center text-slate-500">#</th>
+              <th class="py-2.5 px-3 w-44">HOF ID (ไอดี)</th>
+              <th class="py-2.5 px-3 w-28 text-center">🔑 Token</th>
+              <th class="py-2.5 px-3 w-32 text-center">สถานะ</th>
+              <th class="py-2.5 px-3 w-20 text-center">เวลา</th>
+              <th class="py-2.5 px-3">รายละเอียด / ผลลัพธ์</th>
+            </tr>
+          </thead>
+          <tbody id="account-rows" class="divide-y divide-slate-800/40">
+            <tr id="empty-row" class="text-center text-slate-500 py-8">
+              <td colspan="7" class="py-8">ไม่พบข้อมูลบัญชี กรุณาเพิ่มไอดีใน accounts.txt หรือลากไฟล์ .txt เข้ามาในโปรแกรม</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!--  TAB 2: ADVANCED SETTINGS                  -->
+    <!-- ========================================== -->
+    <div id="tab-settings" class="tab-content flex-1 overflow-y-auto p-5 space-y-5 min-h-0">
+      
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        
+        <!-- Section A: Operation Modes -->
+        <div class="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3">
+          <div class="flex items-center gap-2 border-b border-slate-800 pb-2">
+            <span class="text-sm">🎯</span>
+            <h3 class="text-xs font-bold text-white uppercase tracking-wider">โหมดการทำงาน (Operation Mode)</h3>
+          </div>
+          
+          <div class="space-y-2">
+            <label class="flex items-start gap-3 p-2.5 rounded-lg bg-slate-800/40 border border-indigo-500/30 cursor-pointer hover:bg-slate-800/70 transition">
+              <input type="radio" name="mode" id="mode-all" value="all" checked onchange="updateModeSetting('all')" class="mt-0.5 text-indigo-600 focus:ring-0">
+              <div>
+                <div class="text-xs font-semibold text-indigo-300">🚀 โหมด Hybrid (ล็อกอิน + รับของอัตโนมัติ)</div>
+                <p class="text-[11px] text-slate-400 mt-0.5">ข้าม Turnstile สกัด Token แล้วยิงรับของทันทีในรอบเดียว</p>
+              </div>
+            </label>
+
+            <label class="flex items-start gap-3 p-2.5 rounded-lg bg-slate-800/20 border border-slate-700/50 cursor-pointer hover:bg-slate-800/50 transition">
+              <input type="radio" name="mode" id="mode-harvest" value="harvest" onchange="updateModeSetting('harvest')" class="mt-0.5 text-indigo-600 focus:ring-0">
+              <div>
+                <div class="text-xs font-semibold text-slate-200">🔑 โหมด Harvest Only (เก็บ Token เข้าคลัง)</div>
+                <p class="text-[11px] text-slate-400 mt-0.5">เปิด Chrome แค่เพื่อดูด Token สะสมไว้ใน tokens.json ไม่ยิงรับของ</p>
+              </div>
+            </label>
+
+            <label class="flex items-start gap-3 p-2.5 rounded-lg bg-slate-800/20 border border-slate-700/50 cursor-pointer hover:bg-slate-800/50 transition">
+              <input type="radio" name="mode" id="mode-redeem" value="redeem_only" onchange="updateModeSetting('redeem_only')" class="mt-0.5 text-indigo-600 focus:ring-0">
+              <div>
+                <div class="text-xs font-semibold text-slate-200">⚡ โหมด Direct Redeem (ยิงรับของ 100 จอทันที)</div>
+                <p class="text-[11px] text-slate-400 mt-0.5">ใช้ Token ที่มีอยู่ในคลังยิงรับของ 0 วินาทีโดยไม่ต้องเปิด Browser</p>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Section B: Cooldown & Anti-Limit Tuning -->
+        <div class="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3">
+          <div class="flex items-center gap-2 border-b border-slate-800 pb-2">
+            <span class="text-sm">🛡️</span>
+            <h3 class="text-xs font-bold text-white uppercase tracking-wider">ระบบคูลดาวน์ป้องกัน Limit (Pacing)</h3>
+          </div>
+
+          <div class="space-y-3">
+            <div>
+              <div class="flex justify-between text-xs mb-1">
+                <span class="text-slate-300">ระยะเวลาพักระหว่างรอบ (Batch Cooldown):</span>
+                <span id="cooldown-val" class="font-bold text-emerald-400">5 วินาที</span>
+              </div>
+              <input type="range" id="slider-cooldown" min="1" max="20" value="5" oninput="document.getElementById('cooldown-val').innerText = this.value + ' วินาที'" class="w-full accent-indigo-500 bg-slate-800 h-1.5 rounded-lg">
+            </div>
+
+            <div>
+              <div class="flex justify-between text-xs mb-1">
+                <span class="text-slate-300">พักคูลดาวน์ลึก (Deep Cooldown) ทุกๆ:</span>
+                <span id="deep-every-val" class="font-bold text-amber-400">10 ไอดี</span>
+              </div>
+              <input type="range" id="slider-deep-every" min="5" max="50" step="5" value="10" oninput="document.getElementById('deep-every-val').innerText = this.value + ' ไอดี'" class="w-full accent-indigo-500 bg-slate-800 h-1.5 rounded-lg">
+            </div>
+
+            <div>
+              <div class="flex justify-between text-xs mb-1">
+                <span class="text-slate-300">ระยะเวลาพักคูลดาวน์ลึก (Deep Seconds):</span>
+                <span id="deep-sec-val" class="font-bold text-amber-400">15 วินาที</span>
+              </div>
+              <input type="range" id="slider-deep-sec" min="5" max="60" step="5" value="15" oninput="document.getElementById('deep-sec-val').innerText = this.value + ' วินาที'" class="w-full accent-indigo-500 bg-slate-800 h-1.5 rounded-lg">
+            </div>
+
+            <div>
+              <div class="flex justify-between text-xs mb-1">
+                <span class="text-slate-300">พักฟื้นเมื่อตรวจพบ 429/1015 (Limit Sec):</span>
+                <span id="limit-sec-val" class="font-bold text-rose-400">20 วินาที</span>
+              </div>
+              <input type="range" id="slider-limit-sec" min="10" max="60" step="5" value="20" oninput="document.getElementById('limit-sec-val').innerText = this.value + ' วินาที'" class="w-full accent-indigo-500 bg-slate-800 h-1.5 rounded-lg">
+            </div>
+          </div>
+        </div>
+
+        <!-- Section C: Event ID & API Settings -->
+        <div class="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3">
+          <div class="flex items-center gap-2 border-b border-slate-800 pb-2">
+            <span class="text-sm">🎁</span>
+            <h3 class="text-xs font-bold text-white uppercase tracking-wider">การตั้งค่าอีเวนต์ (Event ID)</h3>
+          </div>
+
+          <div class="space-y-2">
+            <label class="block text-[11px] text-slate-400">Event UUID สำหรับกดรับของรางวัล:</label>
+            <div class="flex gap-2">
+              <input type="text" id="input-event-uuid" value="a297cbd7-c1c4-448f-9e9f-0f2a35d28ac3" class="w-full px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-indigo-300 font-mono focus:outline-none focus:border-indigo-500">
+              <button onclick="fetchEventUuid()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-white rounded-lg transition flex-shrink-0">ดึงอัตโนมัติ</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section D: Session & Cache Cleanup -->
+        <div class="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3">
+          <div class="flex items-center gap-2 border-b border-slate-800 pb-2">
+            <span class="text-sm">🧹</span>
+            <h3 class="text-xs font-bold text-white uppercase tracking-wider">จัดการแคชและโปรไฟล์ Chrome</h3>
+          </div>
+
+          <div class="flex flex-wrap gap-2 pt-1">
+            <button onclick="sendAction('CLEAR_CACHE')" class="px-3 py-2 bg-slate-800 hover:bg-rose-900/40 hover:border-rose-500/50 border border-slate-700 text-xs text-slate-200 rounded-lg transition flex items-center gap-1.5">
+              <span>🗑️</span> ล้างแคชโปรไฟล์ Bot
+            </button>
+            <button onclick="sendAction('BACKUP_TOKENS')" class="px-3 py-2 bg-slate-800 hover:bg-indigo-900/40 hover:border-indigo-500/50 border border-slate-700 text-xs text-slate-200 rounded-lg transition flex items-center gap-1.5">
+              <span>📥</span> สำรองไฟล์ tokens.json
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Save Button Bar -->
+      <div class="flex items-center justify-between pt-4 border-t border-slate-800 flex-shrink-0">
+        <span class="text-[11px] text-slate-500">การตั้งค่าทั้งหมดจะถูกบันทึกลง config.json อัตโนมัติ</span>
+        <button onclick="saveSettings()" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-indigo-600/30 transition active:scale-95">
+          💾 บันทึกและกลับหน้าหลัก
+        </button>
+      </div>
+
+    </div>
+
+    <!-- ========================================== -->
+    <!--  TAB 3: TOKEN VAULT                        -->
+    <!-- ========================================== -->
+    <div id="tab-vault" class="tab-content flex-1 overflow-y-auto p-5 space-y-4 min-h-0">
+      <div class="flex items-center justify-between flex-shrink-0">
+        <div>
+          <h3 class="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+            <span>🔑</span> คลังเก็บ JWT Token แยกตามบัญชี
+          </h3>
+          <p class="text-[11px] text-slate-400 mt-0.5">Token ที่พร้อมใช้งานสำหรับยิงรับของ 0s แบบไม่ต้องเปิดเบราว์เซอร์</p>
+        </div>
+        <button onclick="sendAction('DIRECT_REDEEM')" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg shadow-lg shadow-emerald-600/30 transition active:scale-95">
+          ⚡ ยิงรับของทุกไอดีทันที (Direct Redeem)
+        </button>
+      </div>
+
+      <div id="token-vault-list" class="flex-1 p-3 bg-slate-950 border border-slate-800 rounded-xl font-mono text-[11px] text-slate-300 overflow-y-auto space-y-2 min-h-0">
+        <div class="text-center text-slate-500 py-6">ยังไม่มี Token ในคลัง กรุณารันโหมดปกติ หรือ Harvest เพื่อสะสม Token</div>
+      </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!--  TAB 4: LIVE TERMINAL LOGS                 -->
+    <!-- ========================================== -->
+    <div id="tab-logs" class="tab-content flex-1 overflow-y-auto p-4 space-y-2 min-h-0">
+      <div class="flex items-center justify-between text-xs text-slate-400 flex-shrink-0">
+        <span class="flex items-center gap-2 font-medium text-slate-300">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          📜 Terminal Output & Multi-thread Logs
+        </span>
+        <div class="flex items-center gap-2">
+          <button onclick="copyLogs()" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg border border-slate-700 text-[11px] font-medium transition flex items-center gap-1.5 shadow-sm">
+            📋 คัดลอก Logs ทั้งหมด
+          </button>
+          <button onclick="clearLogs()" class="px-2.5 py-1 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 hover:text-rose-100 rounded-lg border border-rose-800/50 text-[11px] font-medium transition flex items-center gap-1.5">
+            🗑️ ล้างหน้าจอ
+          </button>
+        </div>
+      </div>
+      <div id="log-terminal" class="flex-1 bg-black/90 border border-slate-800 p-3 rounded-xl font-mono text-[11px] text-slate-300 overflow-y-auto space-y-1 min-h-0 select-text">
+        <!-- Log lines will append here -->
+      </div>
+    </div>
+
+    <!-- Bottom Status Footer -->
+    <footer class="px-5 py-2.5 bg-[#090d16] border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-400 flex-shrink-0">
+      <div class="flex items-center gap-3">
+        <span>คิวทั้งหมด: <strong id="footer-total" class="text-white">0</strong> ไอดี</span>
+        <span>•</span>
+        <span>สำเร็จ: <strong id="footer-success" class="text-emerald-400">0</strong></span>
+        <span>•</span>
+        <span>ผิดพลาด: <strong id="footer-failed" class="text-rose-400">0</strong></span>
+        <span>•</span>
+        <span>เลือกอยู่: <strong id="footer-selected" class="text-indigo-400">0</strong></span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-slate-500">Auto-Save State: <strong class="text-emerald-400">Enabled</strong></span>
+      </div>
+    </footer>
+
+  </div>
+
+  <!-- Cyberpunk Context Menu (Right-Click) -->
+  <div id="context-menu" class="fixed z-50 hidden bg-[#13192b] border border-slate-700/80 rounded-xl shadow-2xl shadow-black/80 py-1.5 w-64 text-xs backdrop-blur-xl font-sans text-slate-200">
+    <div class="px-3 py-1 text-[10px] uppercase font-bold text-slate-500 border-b border-slate-800 mb-1 tracking-wider flex items-center justify-between">
+      <span>เมนูการทำงาน</span>
+      <span id="ctx-target-label" class="text-indigo-400 font-mono">Row #1</span>
+    </div>
+    
+    <button onclick="ctxAction('RUN_FROM_ROW')" class="w-full text-left px-3 py-1.5 hover:bg-indigo-600 hover:text-white flex items-center gap-2 transition">
+      <span class="text-indigo-400">▶️</span> <span>เริ่มรันตั้งแต่ไอดีนี้ (From Here)</span>
+    </button>
+    <button onclick="ctxAction('RUN_SELECTED')" class="w-full text-left px-3 py-1.5 hover:bg-emerald-600 hover:text-white flex items-center gap-2 transition">
+      <span class="text-emerald-400">🚀</span> <span>รันเฉพาะไอดีที่เลือกไว้ (<strong id="ctx-selected-count">0</strong>)</span>
+    </button>
+    <button onclick="ctxAction('RUN_FAILED')" class="w-full text-left px-3 py-1.5 hover:bg-rose-600 hover:text-white flex items-center gap-2 transition">
+      <span class="text-rose-400">⚡</span> <span>รันเฉพาะไอดีที่ล้มเหลว</span>
+    </button>
+    
+    <div class="my-1 border-t border-slate-800"></div>
+
+    <button onclick="ctxAction('RESET_SELECTED')" class="w-full text-left px-3 py-1.5 hover:bg-amber-600 hover:text-white flex items-center gap-2 transition text-amber-300">
+      <span>🔄</span> <span>รีเซ็ตสถานะเป็นรอคิว (Reset Status)</span>
+    </button>
+    <button onclick="ctxAction('COPY_ROW')" class="w-full text-left px-3 py-1.5 hover:bg-slate-700 hover:text-white flex items-center gap-2 transition">
+      <span>📋</span> <span>คัดลอก ไอดี:รหัสผ่าน</span>
+    </button>
+
+    <div class="my-1 border-t border-slate-800"></div>
+
+    <button onclick="ctxAction('SELECT_ALL')" class="w-full text-left px-3 py-1.5 hover:bg-slate-700 hover:text-white flex items-center gap-2 transition">
+      <span>☑️</span> <span>เลือกทั้งหมด (Select All)</span>
+    </button>
+    <button onclick="ctxAction('DESELECT_ALL')" class="w-full text-left px-3 py-1.5 hover:bg-slate-700 hover:text-white flex items-center gap-2 transition">
+      <span>⬜</span> <span>ยกเลิกการเลือกทั้งหมด (Deselect All)</span>
+    </button>
+
+    <div class="my-1 border-t border-slate-800"></div>
+
+    <button onclick="ctxAction('CLEAR_ALL_STATE')" class="w-full text-left px-3 py-1.5 hover:bg-rose-950/80 hover:text-rose-300 text-rose-400 flex items-center gap-2 transition">
+      <span>🗑️</span> <span>ล้างประวัติสถานะทั้งหมด (Clear All)</span>
+    </button>
+  </div>
+
+  <!-- ============================================================== -->
+  <!-- 🌐 Cyber Dark Chrome Profile Manager Modal Dialog (100% Mockup) -->
+  <!-- ============================================================== -->
+  <div id="chrome-profiles-modal" class="fixed inset-0 z-50 hidden bg-black/80 backdrop-blur-md flex items-center justify-center p-4 transition-all duration-300">
+    
+    <!-- Main Window Frame (Exact Replica of Design) -->
+    <div class="w-full max-w-[740px] bg-[#0B0F19] rounded-2xl border border-[#1E293B] shadow-2xl overflow-hidden flex flex-col transform transition-all duration-300 scale-95 opacity-0" id="profiles-modal-box">
+      
+      <!-- Window Title Bar -->
+      <div class="bg-[#0F1524] px-4 py-2.5 border-b border-[#1E293B] flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-indigo-400 text-sm">🌐</span>
+          <span class="text-xs text-slate-300 font-semibold">จัดการ Google Chrome Profiles สำหรับบอท (Auto-Sync Extension)</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <span id="modal-app-version" class="text-xs text-slate-400 font-mono">v2.0 Pro</span>
+          <button onclick="closeProfilesModal()" class="w-6 h-6 rounded-md flex items-center justify-center text-slate-400 hover:text-white hover:bg-rose-600/30 hover:border hover:border-rose-500/40 text-xs transition">
+            ✕
+          </button>
+        </div>
+      </div>
+
+      <!-- Body Container -->
+      <div class="p-6 space-y-4">
+        
+        <!-- 1. Header Banner -->
+        <div class="rounded-xl p-4 flex items-center justify-between relative overflow-hidden bg-gradient-to-r from-[#1A233C]/90 to-[#101628]/95 border border-indigo-500/25">
+          <div class="absolute -right-8 -top-8 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none"></div>
+          <div class="flex items-center gap-3.5 z-10">
+            <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-500/20 to-purple-500/10 border border-indigo-500/30 flex items-center justify-center text-2xl shadow-inner">
+              🌐
+            </div>
+            <div>
+              <div class="text-[15px] font-bold text-white flex items-center gap-2">
+                Google Chrome Profile Manager
+                <span class="px-2 py-0.5 rounded-md bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-[10px] font-semibold uppercase tracking-wider">
+                  Worker Sync Engine
+                </span>
+              </div>
+              <p class="text-xs text-slate-400 mt-0.5">
+                สร้าง & จำลอง Chrome แยกโฟลเดอร์ 100% พร้อมติดตั้ง Extension เชื่อมต่อ Token อัตโนมัติ
+              </p>
+            </div>
+          </div>
+
+          <div id="modal-badge-count" class="z-10 px-3.5 py-1.5 rounded-lg bg-emerald-950/60 border border-emerald-500/30 text-emerald-400 text-xs font-semibold flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span id="modal-badge-text">0 Profiles Active</span>
+          </div>
+        </div>
+
+        <!-- 2. Profile Creation & Action Card -->
+        <div class="rounded-xl p-4 space-y-3 bg-[#13192B] border border-white/5 shadow-inner">
+          <div class="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+            <span>⚙️ กำหนดจำนวน Profile บอท (Worker Slots):</span>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <!-- Custom Stepper -->
+            <div class="flex items-center bg-[#0B0F19] border border-[#25314E] rounded-lg p-1">
+              <button onclick="changeModalProfileCount(-1)" class="w-8 h-8 rounded-md bg-[#161F36] hover:bg-indigo-600/30 text-slate-300 hover:text-white flex items-center justify-center font-bold text-base transition-colors">-</button>
+              <input id="modal-profile-count" type="text" value="5" readonly class="w-12 text-center bg-transparent font-bold text-indigo-300 text-sm focus:outline-none">
+              <button onclick="changeModalProfileCount(1)" class="w-8 h-8 rounded-md bg-[#161F36] hover:bg-indigo-600/30 text-slate-300 hover:text-white flex items-center justify-center font-bold text-base transition-colors">+</button>
+            </div>
+
+            <!-- Create Button -->
+            <button onclick="handleModalCreateProfiles()" class="flex-1 py-2.5 px-4 rounded-lg bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-[0_0_20px_-3px_rgba(99,102,241,0.45)] transition-all active:scale-[0.98]">
+              <span>➕</span>
+              <span>สร้าง / อัปเดต Profiles</span>
+            </button>
+
+            <!-- Delete All Button -->
+            <button onclick="handleModalDeleteAllProfiles()" class="py-2.5 px-4 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 border border-rose-500/30 text-rose-300 hover:text-white font-semibold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-[0.98]">
+              <span>🗑️</span>
+              <span>ล้างบอททั้งหมด</span>
+            </button>
+          </div>
+
+          <!-- Status Bar -->
+          <div id="modal-status-msg" class="text-[11px] text-emerald-400 flex items-center gap-1.5 font-medium min-h-[16px]">
+            <span>✅ ระบบพร้อมทำงาน</span>
+          </div>
+        </div>
+
+        <!-- 3. Profiles List Container -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between px-1">
+            <div class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+              <span>📋 รายการ Profile บอทที่พร้อมใช้งาน:</span>
+            </div>
+            <button onclick="sendAction('LAUNCH_ALL_PROFILES')" class="px-3 py-1.5 rounded-lg bg-[#181F35] hover:bg-indigo-600/20 border border-indigo-500/40 text-indigo-300 hover:text-white text-[11px] font-semibold flex items-center gap-1.5 transition-all active:scale-[0.98]">
+              <span>🚀</span>
+              <span>เปิดทดสอบทุก Profile พร้อมกัน</span>
+            </button>
+          </div>
+
+          <!-- Scrollable List -->
+          <div id="modal-profiles-list" class="rounded-xl p-2.5 max-h-[220px] overflow-y-auto space-y-2 bg-[#13192B] border border-white/5">
+            <!-- Injected by JS -->
+          </div>
+        </div>
+
+        <!-- 4. Footer -->
+        <div class="pt-2 flex items-center justify-between border-t border-[#1E293B]/70">
+          <div class="text-[11px] text-slate-400 flex items-center gap-1.5">
+            <span class="text-indigo-400">💡</span>
+            <span>บอทใช้ Extension ซิงค์ Token อัตโนมัติ ปลอดภัย ไม่ชนแท็บ Chrome ปกติ</span>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <button onclick="sendAction('OPEN_PROFILES_FOLDER')" class="px-4 py-2 rounded-lg bg-[#13192B] hover:bg-[#1C2542] border border-[#25314E] text-slate-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition-all active:scale-[0.98]">
+              <span>📂</span>
+              <span>เปิดโฟลเดอร์ Profiles</span>
+            </button>
+            <button onclick="closeProfilesModal()" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition-all active:scale-[0.98]">
+              ปิดหน้าต่าง
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Drag & Drop Accounts File (.txt) Overlay Indicator -->
+  <div id="file-drop-overlay" class="fixed inset-0 z-50 bg-[#070b14]/90 backdrop-blur-md flex flex-col items-center justify-center pointer-events-none transition-all duration-200 opacity-0 hidden">
+    <div class="p-8 rounded-3xl border-2 border-dashed border-indigo-500 bg-[#0f172a]/95 text-center max-w-md shadow-2xl transform scale-95 transition-all duration-200" id="file-drop-box">
+      <div class="w-16 h-16 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center mx-auto mb-4 text-3xl shadow-lg shadow-indigo-500/20">
+        📥
+      </div>
+      <h3 class="text-base font-bold text-white mb-1">วางไฟล์ accounts.txt ที่นี่</h3>
+      <p class="text-xs text-indigo-300">รองรับไฟล์ .txt รูปแบบ <code class="bg-indigo-950/80 px-1.5 py-0.5 rounded border border-indigo-500/30 text-indigo-200">ID|PASS</code> หรือ <code class="bg-indigo-950/80 px-1.5 py-0.5 rounded border border-indigo-500/30 text-indigo-200">ID:PASS</code></p>
+      <div class="mt-4 inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-[11px] text-emerald-300">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+        <span>ระบบจะอ่านและเพิ่มไอดีเข้าคิวการทำงานทันที</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast" class="fixed bottom-5 right-5 transform translate-y-20 opacity-0 transition-all duration-300 bg-slate-900 border border-indigo-500/40 shadow-2xl rounded-xl px-4 py-3 text-xs text-white flex items-center gap-2.5 pointer-events-none z-50">
+    <span class="text-indigo-400 text-sm">⚡</span>
+    <span id="toast-msg">ข้อความแจ้งเตือน</span>
+  </div>
+
+  <!-- JavaScript Bridge & Ultra-Fast Selection Engine -->
+  <script>
+    let appData = {
+      isRunning: false,
+      threads: 5,
+      autoCaptcha: true,
+      mode: 'all',
+      cooldown: 5,
+      deepEvery: 10,
+      deepSec: 15,
+      limitSec: 20,
+      eventUuid: 'a297cbd7-c1c4-448f-9e9f-0f2a35d28ac3',
+      hwid: '',
+      license: '',
+      accounts: [],
+      tokens: {}
+    };
+
+    let currentFilter = 'all';
+    let contextTargetIndex = -1;
+
+    // ────────── Ultra-Fast In-Memory Cache (0ms latency) ──────────
+    let rowDomList = [];
+    let checkboxDomList = [];
+    let searchMetaList = [];
+    let searchDebounceTimer = null;
+
+    // ────────── Excel-Grade Drag Selection Engine ──────────
+    let isDragging = false;
+    let dragStartIndex = -1;
+    let dragCurrentIndex = -1;
+    let lastAnchorIndex = 0;
+    let dragSnapshot = null;
+    let autoScrollInterval = null;
+
+    function initDragSelectEngine() {
+      const container = document.getElementById('table-scroll-container');
+
+      window.addEventListener('mousemove', (e) => {
+        if (!isDragging || dragStartIndex < 0) return;
+
+        const rect = container.getBoundingClientRect();
+        const topDist = e.clientY - rect.top;
+        const botDist = rect.bottom - e.clientY;
+
+        clearInterval(autoScrollInterval);
+        autoScrollInterval = null;
+
+        if (topDist > 0 && topDist < 45) {
+          autoScrollInterval = setInterval(() => { container.scrollTop -= 18; }, 20);
+        } else if (botDist > 0 && botDist < 45) {
+          autoScrollInterval = setInterval(() => { container.scrollTop += 18; }, 20);
+        }
+
+        const element = document.elementFromPoint(e.clientX, e.clientY);
+        const row = element ? element.closest('.account-row') : null;
+        if (row) {
+          const idx = parseInt(row.getAttribute('data-index'));
+          if (!isNaN(idx) && idx !== dragCurrentIndex) {
+            handleDragMoveTo(idx, e.ctrlKey || e.metaKey);
+          }
+        }
+      });
+
+      window.addEventListener('mouseup', (e) => {
+        if (isDragging) {
+          isDragging = false;
+          clearInterval(autoScrollInterval);
+          autoScrollInterval = null;
+
+          if (dragCurrentIndex >= 0) lastAnchorIndex = dragCurrentIndex;
+          dragStartIndex = -1;
+          dragCurrentIndex = -1;
+          dragSnapshot = null;
+
+          dispatchBatchSelectionToBackend();
+        }
+      });
+
+      document.addEventListener('click', (e) => {
+        const ctxMenu = document.getElementById('context-menu');
+        if (ctxMenu && !ctxMenu.contains(e.target)) {
+          ctxMenu.classList.add('hidden');
+        }
+      });
+
+      container.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        const row = e.target.closest('.account-row');
+        if (row) {
+          const idx = parseInt(row.getAttribute('data-index'));
+          openContextMenu(e.clientX, e.clientY, idx);
+        } else {
+          openContextMenu(e.clientX, e.clientY, -1);
+        }
+      });
+    }
+
+    function handleRowMouseDown(e, index) {
+      if (e.button === 2) return;
+
+      if (e.target.tagName === 'INPUT' && e.target.type === 'checkbox') {
+        const checked = e.target.checked;
+        appData.accounts[index].isSelected = checked;
+        if (rowDomList[index]) rowDomList[index].classList.toggle('row-selected', checked);
+        lastAnchorIndex = index;
+        updateSelectedCounter();
+        dispatchBatchSelectionToBackend();
+        return;
+      }
+
+      const isShift = e.shiftKey;
+      const isCtrl = e.ctrlKey || e.metaKey;
+
+      if (isShift && lastAnchorIndex >= 0 && lastAnchorIndex < appData.accounts.length) {
+        const from = Math.min(lastAnchorIndex, index);
+        const to = Math.max(lastAnchorIndex, index);
+        for (let i = 0; i < appData.accounts.length; i++) {
+          const inRange = (i >= from && i <= to);
+          appData.accounts[i].isSelected = inRange;
+          if (rowDomList[i]) rowDomList[i].classList.toggle('row-selected', inRange);
+          if (checkboxDomList[i]) checkboxDomList[i].checked = inRange;
+        }
+        updateSelectedCounter();
+        dispatchBatchSelectionToBackend();
+        return;
+      }
+
+      isDragging = true;
+      dragStartIndex = index;
+      dragCurrentIndex = index;
+      lastAnchorIndex = index;
+
+      if (isCtrl) {
+        dragSnapshot = appData.accounts.map(a => a.isSelected);
+        appData.accounts[index].isSelected = !appData.accounts[index].isSelected;
+      } else {
+        dragSnapshot = null;
+        for (let i = 0; i < appData.accounts.length; i++) {
+          const isTarget = (i === index);
+          appData.accounts[i].isSelected = isTarget;
+          if (rowDomList[i]) rowDomList[i].classList.toggle('row-selected', isTarget);
+          if (checkboxDomList[i]) checkboxDomList[i].checked = isTarget;
+        }
+      }
+
+      if (rowDomList[index]) rowDomList[index].classList.toggle('row-selected', appData.accounts[index].isSelected);
+      if (checkboxDomList[index]) checkboxDomList[index].checked = appData.accounts[index].isSelected;
+      updateSelectedCounter();
+    }
+
+    function handleDragMoveTo(index, isCtrl) {
+      dragCurrentIndex = index;
+      const from = Math.min(dragStartIndex, dragCurrentIndex);
+      const to = Math.max(dragStartIndex, dragCurrentIndex);
+
+      for (let i = 0; i < appData.accounts.length; i++) {
+        const inRange = (i >= from && i <= to);
+        let selectedState = false;
+
+        if (isCtrl && dragSnapshot) {
+          selectedState = inRange ? true : dragSnapshot[i];
+        } else {
+          selectedState = inRange;
+        }
+
+        if (appData.accounts[i].isSelected !== selectedState) {
+          appData.accounts[i].isSelected = selectedState;
+          if (rowDomList[i]) rowDomList[i].classList.toggle('row-selected', selectedState);
+          if (checkboxDomList[i]) checkboxDomList[i].checked = selectedState;
+        }
+      }
+      updateSelectedCounter();
+    }
+
+    function toggleAccountSelect(index, isChecked) {
+      if (appData.accounts[index]) {
+        appData.accounts[index].isSelected = isChecked;
+        if (rowDomList[index]) rowDomList[index].classList.toggle('row-selected', isChecked);
+      }
+      updateSelectedCounter();
+      sendAction('TOGGLE_SELECT_ACCOUNT', { index: index, selected: isChecked });
+    }
+
+    function toggleSelectAll(isChecked) {
+      for (let i = 0; i < appData.accounts.length; i++) {
+        appData.accounts[i].isSelected = isChecked;
+        if (rowDomList[i]) rowDomList[i].classList.toggle('row-selected', isChecked);
+        if (checkboxDomList[i]) checkboxDomList[i].checked = isChecked;
+      }
+      const chkAll = document.getElementById('check-all');
+      if (chkAll) chkAll.checked = isChecked;
+      
+      updateSelectedCounter();
+      sendAction('TOGGLE_SELECT_ALL', { selected: isChecked });
+    }
+
+    function updateSelectedCounter() {
+      let count = 0;
+      for (let i = 0; i < appData.accounts.length; i++) {
+        if (appData.accounts[i].isSelected) count++;
+      }
+      const el = document.getElementById('footer-selected');
+      if (el) el.innerText = count.toLocaleString();
+    }
+
+    function dispatchBatchSelectionToBackend() {
+      const indices = [];
+      for (let i = 0; i < appData.accounts.length; i++) {
+        if (appData.accounts[i].isSelected) indices.push(i);
+      }
+      sendAction('SET_SELECTED_INDICES', { indices: indices });
+    }
+
+    // ────────── Ultra-Fast Instant Search & Filter (0ms) ──────────
+    function onSearchInput() {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(filterTable, 30);
+    }
+
+    function setFilter(mode) {
+      currentFilter = mode;
+      document.getElementById('flt-all').className = mode === 'all' ? 'px-2.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white transition' : 'px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-400 hover:bg-slate-700 transition';
+      document.getElementById('flt-token').className = mode === 'token' ? 'px-2.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white transition' : 'px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-400 hover:bg-slate-700 transition';
+      document.getElementById('flt-fail').className = mode === 'fail' ? 'px-2.5 py-1.5 rounded-lg text-xs font-medium bg-indigo-600 text-white transition' : 'px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-400 hover:bg-slate-700 transition';
+      filterTable();
+    }
+
+    function filterTable() {
+      const qInput = document.getElementById('search-input');
+      const q = qInput ? qInput.value.trim().toLowerCase() : '';
+      const hasQuery = q.length > 0;
+      const len = appData.accounts.length;
+
+      for (let i = 0; i < len; i++) {
+        const m = searchMetaList[i];
+        if (!m) continue;
+
+        let matchMode = true;
+        if (currentFilter === 'token') {
+          matchMode = m.hasToken;
+        } else if (currentFilter === 'fail') {
+          matchMode = m.isFailed;
+        }
+
+        let matchQuery = true;
+        if (hasQuery) {
+          matchQuery = m.username.includes(q) || m.status.includes(q) || m.detail.includes(q);
+        }
+
+        const isVisible = matchMode && matchQuery;
+        if (rowDomList[i]) {
+          rowDomList[i].style.display = isVisible ? '' : 'none';
+        }
+      }
+    }
+
+    // ────────── Context Menu Controller ──────────
+    function openContextMenu(x, y, index) {
+      contextTargetIndex = index;
+      const ctxMenu = document.getElementById('context-menu');
+      if (!ctxMenu) return;
+
+      let selectedCount = 0;
+      for (let i = 0; i < appData.accounts.length; i++) {
+        if (appData.accounts[i].isSelected) selectedCount++;
+      }
+      document.getElementById('ctx-selected-count').innerText = selectedCount;
+
+      if (index >= 0 && appData.accounts[index]) {
+        document.getElementById('ctx-target-label').innerText = `${appData.accounts[index].username} (#${index + 1})`;
+        if (!appData.accounts[index].isSelected && selectedCount <= 1) {
+          for (let i = 0; i < appData.accounts.length; i++) {
+            const isTarget = (i === index);
+            appData.accounts[i].isSelected = isTarget;
+            if (rowDomList[i]) rowDomList[i].classList.toggle('row-selected', isTarget);
+            if (checkboxDomList[i]) checkboxDomList[i].checked = isTarget;
+          }
+          updateSelectedCounter();
+          dispatchBatchSelectionToBackend();
+        }
+      } else {
+        document.getElementById('ctx-target-label').innerText = `ทั้งหมด (${appData.accounts.length})`;
+      }
+
+      const maxX = window.innerWidth - 270;
+      const maxY = window.innerHeight - 320;
+      ctxMenu.style.left = Math.min(x, maxX) + 'px';
+      ctxMenu.style.top = Math.min(y, maxY) + 'px';
+      ctxMenu.classList.remove('hidden');
+    }
+
+    function ctxAction(action) {
+      const ctxMenu = document.getElementById('context-menu');
+      if (ctxMenu) ctxMenu.classList.add('hidden');
+
+      switch (action) {
+        case 'RUN_FROM_ROW':
+          if (contextTargetIndex >= 0) {
+            sendAction('RUN_FROM_ROW', { index: contextTargetIndex });
+            triggerToast(`▶️ เริ่มรันตั้งแต่ไอดีแถวที่ ${contextTargetIndex + 1} (${appData.accounts[contextTargetIndex].username})`);
+          } else {
+            sendAction('START_BOT');
+          }
+          break;
+        case 'RUN_SELECTED':
+          sendAction('RUN_SELECTED');
+          break;
+        case 'RUN_FAILED':
+          sendAction('RUN_FAILED');
+          break;
+        case 'RESET_SELECTED':
+          sendAction('RESET_SELECTED');
+          break;
+        case 'COPY_ROW':
+          if (contextTargetIndex >= 0 && appData.accounts[contextTargetIndex]) {
+            const acc = appData.accounts[contextTargetIndex];
+            const text = `${acc.username}|${acc.password}`;
+            navigator.clipboard.writeText(text).then(() => {
+              triggerToast(`📋 คัดลอกข้อมูล '${acc.username}' เรียบร้อย`);
+            });
+          }
+          break;
+        case 'SELECT_ALL':
+          toggleSelectAll(true);
+          break;
+        case 'DESELECT_ALL':
+          toggleSelectAll(false);
+          break;
+        case 'CLEAR_ALL_STATE':
+          if (confirm('ต้องการล้างประวัติสถานะทั้งหมดและรีเซ็ตทุกไอดีเป็นรอคิวใช่หรือไม่?')) {
+            sendAction('CLEAR_ALL_STATE');
+          }
+          break;
+      }
+    }
+
+    function executeToolbarRangeRun() {
+      if (!appData.accounts || appData.accounts.length === 0) {
+        triggerToast('⚠️ ไม่พบบัญชีในระบบ กรุณานำเข้าบัญชีก่อน');
+        return;
+      }
+
+      const startInput = document.getElementById('tb-range-start');
+      const endInput = document.getElementById('tb-range-end');
+      let start = parseInt(startInput ? startInput.value : '1');
+      let end = parseInt(endInput ? endInput.value : appData.accounts.length.toString());
+
+      if (isNaN(start) || start < 1) start = 1;
+      if (isNaN(end) || end < 1) end = appData.accounts.length;
+
+      if (start > end) {
+        const temp = start;
+        start = end;
+        end = temp;
+      }
+
+      if (start > appData.accounts.length) {
+        triggerToast(`⚠️ ลำดับเริ่มต้น (${start}) มากกว่าจำนวนบัญชีทั้งหมดที่มี (${appData.accounts.length})`);
+        return;
+      }
+      if (end > appData.accounts.length) {
+        end = appData.accounts.length;
+      }
+
+      if (startInput) startInput.value = start;
+      if (endInput) endInput.value = end;
+
+      // Select matching accounts in table for immediate visual feedback
+      const fromIdx = start - 1;
+      const toIdx = end - 1;
+      for (let i = 0; i < appData.accounts.length; i++) {
+        const inRange = (i >= fromIdx && i <= toIdx);
+        appData.accounts[i].isSelected = inRange;
+        if (rowDomList[i]) rowDomList[i].classList.toggle('row-selected', inRange);
+        if (checkboxDomList[i]) checkboxDomList[i].checked = inRange;
+      }
+      updateSelectedCounter();
+      dispatchBatchSelectionToBackend();
+
+      const count = end - start + 1;
+      triggerToast(`🚀 เริ่มรันช่วงไอดีลำดับที่ ${start} ถึง ${end} (ทั้งหมด ${count} บัญชี)...`);
+      sendAction('RUN_RANGE', { start: start, end: end });
+    }
+
+    let isIpcInitialized = false;
+    function ensureIpcAttached() {
+      if (isIpcInitialized) return;
+      if (window.chrome && window.chrome.webview) {
+        isIpcInitialized = true;
+        window.chrome.webview.addEventListener('message', function (event) {
+          let msg = event.data;
+          if (typeof msg === 'string') {
+            try { msg = JSON.parse(msg); } catch (e) { }
+          }
+          if (!msg) return;
+
+          const type = msg.type || msg.Type;
+          if (!type) return;
+
+          switch (type) {
+            case 'INIT_DATA':
+              handleInitData(msg);
+              break;
+            case 'STATE_CHANGED':
+              handleStateChanged(msg.isRunning);
+              break;
+            case 'ACCOUNT_RUNNING':
+              handleAccountRunning(msg.username);
+              break;
+            case 'ACCOUNT_SUCCESS':
+              handleAccountSuccess(msg.username, msg.elapsed, msg.detail);
+              break;
+            case 'ACCOUNT_FAIL':
+              handleAccountFail(msg.username, msg.elapsed, msg.detail);
+              break;
+            case 'ACCOUNT_LIMIT':
+              handleAccountLimit(msg.username, msg.elapsed, msg.detail);
+              break;
+            case 'ACCOUNT_RETRY':
+              handleAccountRetry(msg.username, msg.elapsed, msg.detail);
+              break;
+            case 'TOKEN_CAPTURED':
+              handleTokenCaptured(msg.username);
+              break;
+            case 'TOKENS_VAULT_UPDATE':
+              handleTokensVaultUpdate(msg.tokens);
+              break;
+            case 'LOG':
+              appendLog(msg.time, msg.message, msg.color);
+              break;
+            case 'UPTIME':
+              document.getElementById('stat-uptime').innerText = msg.uptime || '00:00:00';
+              break;
+            case 'PROFILES_DATA':
+              handleProfilesData(msg);
+              break;
+            case 'TOAST':
+              triggerToast(msg.message);
+              break;
+          }
+        });
+        sendAction('APP_READY');
+      }
+    }
+
+    // ────────── Send message to C# ──────────
+    function sendAction(actionType, payload = {}) {
+      ensureIpcAttached();
+      if (window.chrome && window.chrome.webview) {
+        window.chrome.webview.postMessage({ type: actionType, ...payload });
+      } else {
+        console.log('[Mock PostMessage]', actionType, payload);
+      }
+    }
+
+    ensureIpcAttached();
+
+    // ────────── Tab Switcher ──────────
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('bg-indigo-600', 'text-white', 'shadow-sm');
+        btn.classList.add('text-slate-400');
+      });
+
+      const activeTab = document.getElementById('tab-' + tabId);
+      const activeBtn = document.getElementById('tab-btn-' + tabId);
+      if (activeTab) activeTab.classList.add('active');
+      if (activeBtn) {
+        activeBtn.classList.add('bg-indigo-600', 'text-white', 'shadow-sm');
+        activeBtn.classList.remove('text-slate-400');
+      }
+    }
+
+    // ────────── UI State Handlers ──────────
+    function handleInitData(data) {
+      if (data.version) {
+        document.getElementById('app-version').innerText = data.version;
+        const modalVer = document.getElementById('modal-app-version');
+        if (modalVer) modalVer.innerText = data.version;
+      }
+      if (data.hwid) {
+        appData.hwid = data.hwid;
+        const shortHwid = data.hwid.length > 12 ? data.hwid.substring(0, 12) + '...' : data.hwid;
+        document.getElementById('hwid-val').innerText = shortHwid;
+      }
+      if (data.license) {
+        appData.license = data.license;
+        document.getElementById('license-val').innerText = 'สิทธิ์: ' + data.license;
+      }
+      if (data.config) {
+        appData.threads = data.config.botThreads || 5;
+        document.getElementById('thread-val').innerText = appData.threads;
+
+        appData.autoCaptcha = data.config.autoStartCaptcha ?? true;
+        updateCaptchaButtonDisplay();
+
+        appData.mode = data.config.operationMode || 'all';
+        if (appData.mode === 'harvest') document.getElementById('mode-harvest').checked = true;
+        else if (appData.mode === 'redeem_only') document.getElementById('mode-redeem').checked = true;
+        else document.getElementById('mode-all').checked = true;
+
+        if (data.config.batchCooldownSeconds) {
+          document.getElementById('slider-cooldown').value = data.config.batchCooldownSeconds;
+          document.getElementById('cooldown-val').innerText = data.config.batchCooldownSeconds + ' วินาที';
+        }
+        if (data.config.deepCooldownEvery) {
+          document.getElementById('slider-deep-every').value = data.config.deepCooldownEvery;
+          document.getElementById('deep-every-val').innerText = data.config.deepCooldownEvery + ' ไอดี';
+        }
+        if (data.config.deepCooldownSeconds) {
+          document.getElementById('slider-deep-sec').value = data.config.deepCooldownSeconds;
+          document.getElementById('deep-sec-val').innerText = data.config.deepCooldownSeconds + ' วินาที';
+        }
+        if (data.config.limitCooldownSeconds) {
+          document.getElementById('slider-limit-sec').value = data.config.limitCooldownSeconds;
+          document.getElementById('limit-sec-val').innerText = data.config.limitCooldownSeconds + ' วินาที';
+        }
+      }
+
+      if (data.accounts) {
+        appData.accounts = data.accounts;
+        renderAccountsTable();
+      }
+
+      if (data.tokens) {
+        handleTokensVaultUpdate(data.tokens);
+      }
+
+      handleStateChanged(data.isRunning || false);
+      updateDashboardStats();
+    }
+
+    function handleStateChanged(isRunning) {
+      appData.isRunning = isRunning;
+      const btnStart = document.getElementById('btn-start');
+      const btnStartText = document.getElementById('btn-start-text');
+      const btnStop = document.getElementById('btn-stop');
+
+      if (isRunning) {
+        btnStart.disabled = true;
+        btnStart.classList.add('opacity-50', 'cursor-not-allowed');
+        btnStartText.innerText = 'กำลังทำงาน...';
+        btnStop.disabled = false;
+        btnStop.classList.remove('opacity-50', 'cursor-not-allowed');
+      } else {
+        btnStart.disabled = false;
+        btnStart.classList.remove('opacity-50', 'cursor-not-allowed');
+        btnStartText.innerText = 'เริ่มทำงาน';
+        btnStop.disabled = true;
+        btnStop.classList.add('opacity-50', 'cursor-not-allowed');
+      }
+    }
+
+    // ────────── Fast Table Rendering & Pre-indexing ──────────
+    function renderAccountsTable() {
+      const tbody = document.getElementById('account-rows');
+      rowDomList = [];
+      checkboxDomList = [];
+      searchMetaList = [];
+
+      if (!appData.accounts || appData.accounts.length === 0) {
+        tbody.innerHTML = '<tr id="empty-row" class="text-center text-slate-500 py-8"><td colspan="7" class="py-8">ไม่พบข้อมูลบัญชี กรุณาเพิ่มไอดีใน accounts.txt หรือลากไฟล์ .txt เข้ามาในโปรแกรม</td></tr>';
+        return;
+      }
+
+      let html = '';
+      const len = appData.accounts.length;
+      for (let idx = 0; idx < len; idx++) {
+        const acc = appData.accounts[idx];
+        const hasToken = !!(acc.sessionStatus && (acc.sessionStatus.includes('มี Token') || acc.sessionStatus.includes('🟢')));
+        const isFailed = !!(acc.status && (acc.status.includes('ล้มเหลว') || acc.status.includes('ผิด')));
+
+        searchMetaList[idx] = {
+          username: acc.username.toLowerCase(),
+          status: (acc.status || '').toLowerCase(),
+          detail: (acc.resultDetail || '').toLowerCase(),
+          hasToken: hasToken,
+          isFailed: isFailed
+        };
+
+        const tokenBadge = hasToken
+          ? '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">🟢 มี Token</span>'
+          : '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-800 text-slate-400 border border-slate-700">⚪ ไม่มี</span>';
+
+        let statusBadge = '<span class="px-2 py-0.5 rounded font-medium text-slate-400 bg-slate-800">⏳ รอคิว</span>';
+        if (acc.status) {
+          if (acc.status.includes('สำเร็จ') || acc.status.includes('เก็บ Token')) {
+            statusBadge = '<span class="px-2 py-0.5 rounded font-bold text-emerald-400 bg-emerald-950/40">✅ สำเร็จ</span>';
+          } else if (isFailed) {
+            statusBadge = '<span class="px-2 py-0.5 rounded font-bold text-rose-400 bg-rose-950/40">❌ ล้มเหลว</span>';
+          } else if (acc.status.includes('กำลัง')) {
+            statusBadge = '<span class="px-2 py-0.5 rounded font-bold text-indigo-400 bg-indigo-950/60 flex items-center justify-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-indigo-400 pulse-dot"></span> ⚡ กำลังรัน</span>';
+          } else if (acc.status.includes('Limit')) {
+            statusBadge = '<span class="px-2 py-0.5 rounded font-bold text-amber-400 bg-amber-950/40">⏳ ติด Limit</span>';
+          } else if (acc.status.includes('ซ้ำ')) {
+            statusBadge = '<span class="px-2 py-0.5 rounded font-bold text-amber-400 bg-amber-950/40">🔄 รอรันซ้ำ</span>';
+          }
+        }
+
+        const isChecked = acc.isSelected !== false;
+        const rowSelectedClass = isChecked ? 'row-selected' : '';
+
+        html += `
+          <tr id="row-${acc.username}" 
+              data-index="${idx}" 
+              data-username="${acc.username}"
+              onmousedown="handleRowMouseDown(event, ${idx})"
+              class="account-row hover:bg-slate-800/40 transition cursor-pointer select-none ${rowSelectedClass}">
+            <td class="py-2.5 px-3 text-center" onmousedown="event.stopPropagation()">
+              <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleAccountSelect(${idx}, this.checked)" class="rounded bg-slate-800 border-slate-700 text-indigo-600 cursor-pointer">
+            </td>
+            <td class="py-2.5 px-2 text-center text-slate-500 font-mono">${idx + 1}</td>
+            <td class="py-2.5 px-3 font-semibold text-slate-200 font-mono">${acc.username}</td>
+            <td class="py-2.5 px-3 text-center token-cell">${tokenBadge}</td>
+            <td class="py-2.5 px-3 text-center status-cell">${statusBadge}</td>
+            <td class="py-2.5 px-3 text-center text-slate-400 time-cell">${acc.registeredAt || '-'}</td>
+            <td class="py-2.5 px-3 text-slate-300 detail-cell">${acc.resultDetail || '-'}</td>
+          </tr>
+        `;
+      }
+
+      tbody.innerHTML = html;
+
+      const rows = tbody.querySelectorAll('.account-row');
+      rows.forEach((r, i) => {
+        rowDomList[i] = r;
+        checkboxDomList[i] = r.querySelector('input[type="checkbox"]');
+      });
+
+      filterTable();
+      updateSelectedCounter();
+
+      const sInput = document.getElementById('tb-range-start');
+      const eInput = document.getElementById('tb-range-end');
+      if (sInput && (!sInput.value || sInput.value === '')) sInput.value = '1';
+      if (eInput && (!eInput.value || eInput.value === '' || parseInt(eInput.value) > len)) eInput.value = len.toString();
+    }
+
+    function handleAccountRunning(username) {
+      const row = document.getElementById('row-' + username);
+      if (row) {
+        const statusCell = row.querySelector('.status-cell');
+        const detailCell = row.querySelector('.detail-cell');
+        if (statusCell) statusCell.innerHTML = '<span class="px-2 py-0.5 rounded font-bold text-indigo-400 bg-indigo-950/60 flex items-center justify-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-indigo-400 pulse-dot"></span> ⚡ กำลังรัน</span>';
+        if (detailCell) detailCell.innerText = 'กำลังเปิดแท็บและข้าม Cloudflare...';
+      }
+    }
+
+    function handleAccountSuccess(username, elapsed, detail) {
+      const idx = appData.accounts.findIndex(a => a.username.toLowerCase() === username.toLowerCase());
+      if (idx >= 0) {
+        const acc = appData.accounts[idx];
+        acc.status = '✅ สำเร็จ';
+        acc.sessionStatus = '🟢 มี Token';
+        acc.registeredAt = elapsed;
+        acc.resultDetail = detail;
+
+        if (searchMetaList[idx]) {
+          searchMetaList[idx].status = '✅ สำเร็จ';
+          searchMetaList[idx].detail = (detail || '').toLowerCase();
+          searchMetaList[idx].hasToken = true;
+          searchMetaList[idx].isFailed = false;
+        }
+
+        const row = rowDomList[idx] || document.getElementById('row-' + username);
+        if (row) {
+          const tokenCell = row.querySelector('.token-cell');
+          const statusCell = row.querySelector('.status-cell');
+          const timeCell = row.querySelector('.time-cell');
+          const detailCell = row.querySelector('.detail-cell');
+          if (tokenCell) tokenCell.innerHTML = '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">🟢 มี Token</span>';
+          if (statusCell) statusCell.innerHTML = '<span class="px-2 py-0.5 rounded font-bold text-emerald-400 bg-emerald-950/40">✅ สำเร็จ</span>';
+          if (timeCell) timeCell.innerText = elapsed || '-';
+          if (detailCell) detailCell.innerText = detail || 'เข้าสู่ระบบสำเร็จ';
+        }
+      }
+      updateDashboardStats();
+    }
+
+    function handleAccountFail(username, elapsed, detail) {
+      const idx = appData.accounts.findIndex(a => a.username.toLowerCase() === username.toLowerCase());
+      if (idx >= 0) {
+        const acc = appData.accounts[idx];
+        acc.status = '❌ ล้มเหลว';
+        acc.registeredAt = elapsed;
+        acc.resultDetail = detail;
+
+        if (searchMetaList[idx]) {
+          searchMetaList[idx].status = '❌ ล้มเหลว';
+          searchMetaList[idx].detail = (detail || '').toLowerCase();
+          searchMetaList[idx].isFailed = true;
+        }
+
+        const row = rowDomList[idx] || document.getElementById('row-' + username);
+        if (row) {
+          const statusCell = row.querySelector('.status-cell');
+          const timeCell = row.querySelector('.time-cell');
+          const detailCell = row.querySelector('.detail-cell');
+          if (statusCell) statusCell.innerHTML = '<span class="px-2 py-0.5 rounded font-bold text-rose-400 bg-rose-950/40">❌ ล้มเหลว</span>';
+          if (timeCell) timeCell.innerText = elapsed || '-';
+          if (detailCell) detailCell.innerText = detail || 'รหัสผ่านไม่ถูกต้อง หรือล็อกอินไม่ผ่าน';
+        }
+      }
+      updateDashboardStats();
+    }
+
+    function handleAccountLimit(username, elapsed, detail) {
+      const idx = appData.accounts.findIndex(a => a.username.toLowerCase() === username.toLowerCase());
+      if (idx >= 0) {
+        const acc = appData.accounts[idx];
+        acc.status = '⏳ ติด Limit';
+        acc.registeredAt = elapsed;
+        acc.resultDetail = detail;
+
+        const row = rowDomList[idx] || document.getElementById('row-' + username);
+        if (row) {
+          const statusCell = row.querySelector('.status-cell');
+          const timeCell = row.querySelector('.time-cell');
+          const detailCell = row.querySelector('.detail-cell');
+          if (statusCell) statusCell.innerHTML = '<span class="px-2 py-0.5 rounded font-bold text-amber-400 bg-amber-950/40">⏳ ติด Limit</span>';
+          if (timeCell) timeCell.innerText = elapsed || '-';
+          if (detailCell) detailCell.innerText = detail || 'ติด Limit Cloudflare ชั่วคราว (รอรันซ้ำ)';
+        }
+      }
+      updateDashboardStats();
+    }
+
+    function handleAccountRetry(username, elapsed, detail) {
+      const idx = appData.accounts.findIndex(a => a.username.toLowerCase() === username.toLowerCase());
+      if (idx >= 0) {
+        const acc = appData.accounts[idx];
+        acc.status = '🔄 รอรันซ้ำ';
+        acc.registeredAt = elapsed;
+        acc.resultDetail = detail;
+
+        const row = rowDomList[idx] || document.getElementById('row-' + username);
+        if (row) {
+          const statusCell = row.querySelector('.status-cell');
+          const timeCell = row.querySelector('.time-cell');
+          const detailCell = row.querySelector('.detail-cell');
+          if (statusCell) statusCell.innerHTML = '<span class="px-2 py-0.5 rounded font-bold text-amber-400 bg-amber-950/40">🔄 รอรันซ้ำ</span>';
+          if (timeCell) timeCell.innerText = elapsed || '-';
+          if (detailCell) detailCell.innerText = detail || 'เกิดปัญหาชั่วคราว (รอรันซ้ำ)';
+        }
+      }
+      updateDashboardStats();
+    }
+
+    function handleTokenCaptured(username) {
+      const idx = appData.accounts.findIndex(a => a.username.toLowerCase() === username.toLowerCase());
+      if (idx >= 0) {
+        appData.accounts[idx].sessionStatus = '🟢 มี Token';
+        if (searchMetaList[idx]) searchMetaList[idx].hasToken = true;
+        const row = rowDomList[idx] || document.getElementById('row-' + username);
+        if (row) {
+          const tokenCell = row.querySelector('.token-cell');
+          if (tokenCell) tokenCell.innerHTML = '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">🟢 มี Token</span>';
+        }
+      }
+      updateDashboardStats();
+    }
+
+    function handleTokensVaultUpdate(tokens) {
+      appData.tokens = tokens || {};
+      const keys = Object.keys(appData.tokens);
+      document.getElementById('nav-token-count').innerText = `(${keys.length})`;
+      
+      const vaultContainer = document.getElementById('token-vault-list');
+      if (keys.length === 0) {
+        vaultContainer.innerHTML = '<div class="text-center text-slate-500 py-6">ยังไม่มี Token ในคลัง กรุณารันโหมดปกติ หรือ Harvest เพื่อสะสม Token</div>';
+        return;
+      }
+
+      let html = '';
+      keys.forEach(k => {
+        const tok = appData.tokens[k];
+        const preview = typeof tok === 'string' ? tok.substring(0, 25) + '...' + tok.substring(tok.length - 8) : (tok.token ? tok.token.substring(0, 25) + '...' : '-');
+        html += `
+          <div class="p-2.5 bg-slate-900/70 rounded-lg border border-slate-800 flex items-center justify-between hover:border-slate-700 transition">
+            <div class="truncate mr-2">
+              <strong class="text-indigo-300 font-sans text-xs">${k}:</strong> 
+              <span class="text-slate-400 ml-1 select-all">${preview}</span>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <span class="text-emerald-400 text-[10px] px-2 py-0.5 rounded bg-emerald-950/40 border border-emerald-500/20">🟢 Valid</span>
+            </div>
+          </div>
+        `;
+      });
+      vaultContainer.innerHTML = html;
+      updateDashboardStats();
+    }
+
+    function updateDashboardStats() {
+      let success = 0;
+      let failed = 0;
+      let hasToken = 0;
+      let selected = 0;
+      const len = appData.accounts.length;
+
+      for (let i = 0; i < len; i++) {
+        const a = appData.accounts[i];
+        if (a.status && (a.status.includes('สำเร็จ') || a.status.includes('เก็บ Token'))) success++;
+        if (a.status && (a.status.includes('ล้มเหลว') || a.status.includes('ผิด'))) failed++;
+        if (a.sessionStatus && (a.sessionStatus.includes('มี Token') || a.sessionStatus.includes('🟢'))) hasToken++;
+        if (a.isSelected) selected++;
+      }
+
+      const vaultCount = Object.keys(appData.tokens).length;
+      const totalTokenCount = Math.max(hasToken, vaultCount);
+
+      document.getElementById('stat-success').innerText = success.toLocaleString();
+      document.getElementById('stat-failed').innerText = failed.toLocaleString();
+      document.getElementById('stat-token').innerText = totalTokenCount.toLocaleString();
+
+      const pct = len > 0 ? Math.round((totalTokenCount / len) * 100) : 0;
+      document.getElementById('stat-token-pct').innerText = pct + '%';
+
+      document.getElementById('footer-total').innerText = len.toLocaleString();
+      document.getElementById('footer-success').innerText = success.toLocaleString();
+      document.getElementById('footer-failed').innerText = failed.toLocaleString();
+      document.getElementById('footer-selected').innerText = selected.toLocaleString();
+    }
+
+    function changeThread(delta) {
+      appData.threads = Math.max(1, Math.min(50, appData.threads + delta));
+      document.getElementById('thread-val').innerText = appData.threads;
+      sendAction('SET_THREAD_COUNT', { threads: appData.threads });
+      triggerToast('🧵 ปรับจำนวนบอทเป็น ' + appData.threads + ' จอ');
+    }
+
+    function toggleCaptcha() {
+      appData.autoCaptcha = !appData.autoCaptcha;
+      updateCaptchaButtonDisplay();
+      sendAction('SAVE_CONFIG', {
+        config: {
+          autoStartCaptcha: appData.autoCaptcha
+        }
+      });
+      triggerToast(appData.autoCaptcha ? '🟢 เปิดใช้งาน Auto Captcha' : '⚪ ปิดการทำงาน Auto Captcha');
+    }
+
+    function updateCaptchaButtonDisplay() {
+      const btn = document.getElementById('btn-captcha-toggle');
+      const text = document.getElementById('captcha-toggle-text');
+      if (appData.autoCaptcha) {
+        btn.className = 'px-3 py-1.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-xs text-emerald-400 hover:bg-emerald-900/40 transition';
+        text.innerText = '● Captcha: ON';
+      } else {
+        btn.className = 'px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-400 hover:bg-slate-800 transition';
+        text.innerText = '○ Captcha: OFF';
+      }
+    }
+
+    function updateModeSetting(mode) {
+      appData.mode = mode;
+      sendAction('SAVE_CONFIG', {
+        config: {
+          operationMode: mode
+        }
+      });
+    }
+
+    function saveSettings() {
+      const batchCooldown = parseInt(document.getElementById('slider-cooldown').value) || 5;
+      const deepEvery = parseInt(document.getElementById('slider-deep-every').value) || 10;
+      const deepSec = parseInt(document.getElementById('slider-deep-sec').value) || 15;
+      const limitSec = parseInt(document.getElementById('slider-limit-sec').value) || 20;
+      const eventUuid = document.getElementById('input-event-uuid').value.trim();
+
+      sendAction('SAVE_CONFIG', {
+        config: {
+          operationMode: appData.mode,
+          batchCooldownSeconds: batchCooldown,
+          deepCooldownEvery: deepEvery,
+          deepCooldownSeconds: deepSec,
+          limitCooldownSeconds: limitSec,
+          eventUuid: eventUuid
+        }
+      });
+
+      triggerToast('✅ บันทึกการตั้งค่าลง config.json เรียบร้อย');
+      switchTab('dashboard');
+    }
+
+    function copyHwid() {
+      if (appData.hwid) {
+        navigator.clipboard.writeText(appData.hwid).then(() => {
+          triggerToast('📋 คัดลอก HWID ลงคลิปบอร์ดแล้ว: ' + appData.hwid);
+        });
+      }
+      sendAction('COPY_HWID');
+    }
+
+    function fetchEventUuid() {
+      triggerToast('🔄 ดึง Event ID ล่าสุดจากระบบเรียบร้อย');
+    }
+
+    const logHistory = [];
+
+    function appendLog(time, message, color) {
+      const term = document.getElementById('log-terminal');
+      if (!term) return;
+
+      logHistory.push(`[${time}] ${message}`);
+      if (logHistory.length > 3000) logHistory.shift();
+
+      const div = document.createElement('div');
+      div.className = 'font-mono leading-relaxed';
+      
+      let textColor = 'text-slate-300';
+      if (color) {
+        if (color.includes('255, 80') || color.includes('248, 113') || color.includes('F87171')) textColor = 'text-rose-400';
+        else if (color.includes('52, 211') || color.includes('34, 197') || color.includes('34D399')) textColor = 'text-emerald-400';
+        else if (color.includes('251, 191') || color.includes('250, 204') || color.includes('FBBF24')) textColor = 'text-amber-300';
+        else if (color.includes('120, 110') || color.includes('140, 200') || color.includes('818CF8')) textColor = 'text-indigo-300';
+      }
+
+      div.innerHTML = `<span class="text-slate-500 select-none">[${time}]</span> <span class="${textColor}">${escapeHtml(message)}</span>`;
+      term.appendChild(div);
+
+      while (term.children.length > 500) {
+        term.removeChild(term.firstChild);
+      }
+      term.scrollTop = term.scrollHeight;
+    }
+
+    function copyLogs() {
+      const textToCopy = logHistory.length > 0 ? logHistory.join('\n') : (document.getElementById('log-terminal')?.innerText || '');
+      if (!textToCopy || textToCopy.trim() === '') {
+        triggerToast('⚠️ ยังไม่มีข้อมูล Logs ให้คัดลอก');
+        return;
+      }
+
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(textToCopy).catch(() => {});
+      }
+      sendAction('COPY_LOGS', { text: textToCopy });
+      triggerToast('📋 คัดลอก Debug Logs ทั้งหมดลง Clipboard แล้ว');
+    }
+
+    function clearLogs() {
+      const term = document.getElementById('log-terminal');
+      if (term) term.innerHTML = '';
+      logHistory.length = 0;
+      sendAction('CLEAR_LOGS');
+      triggerToast('🗑️ ล้างหน้าจอ Log เรียบร้อย');
+    }
+
+    function escapeHtml(str) {
+      return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    let toastTimeout;
+    function triggerToast(msg) {
+      const toast = document.getElementById('toast');
+      document.getElementById('toast-msg').innerText = msg;
+      toast.classList.remove('translate-y-20', 'opacity-0');
+      toast.classList.add('translate-y-0', 'opacity-100');
+      clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => {
+        toast.classList.remove('translate-y-0', 'opacity-100');
+        toast.classList.add('translate-y-20', 'opacity-0');
+      }, 2500);
+    }
+
+    // ────────── Chrome Profile Manager Modal Functions ──────────
+    let modalProfiles = [];
+
+    function openProfilesModal() {
+      const modal = document.getElementById('chrome-profiles-modal');
+      const box = document.getElementById('profiles-modal-box');
+      if (!modal || !box) return;
+
+      modal.classList.remove('hidden');
+      setTimeout(() => {
+        box.classList.remove('scale-95', 'opacity-0');
+        box.classList.add('scale-100', 'opacity-100');
+      }, 10);
+
+      sendAction('GET_PROFILES');
+    }
+
+    function closeProfilesModal() {
+      const modal = document.getElementById('chrome-profiles-modal');
+      const box = document.getElementById('profiles-modal-box');
+      if (!modal || !box) return;
+
+      box.classList.remove('scale-100', 'opacity-100');
+      box.classList.add('scale-95', 'opacity-0');
+      setTimeout(() => {
+        modal.classList.add('hidden');
+      }, 250);
+    }
+
+    function handleProfilesData(data) {
+      if (data.count) {
+        document.getElementById('modal-profile-count').value = data.count;
+      }
+      modalProfiles = data.profiles || [];
+      renderModalProfilesList();
+    }
+
+    function renderModalProfilesList() {
+      const list = document.getElementById('modal-profiles-list');
+      const badgeText = document.getElementById('modal-badge-text');
+      const badgeCount = document.getElementById('modal-badge-count');
+      if (!list) return;
+
+      if (badgeText) {
+        badgeText.innerText = `${modalProfiles.length} Profiles Active`;
+      }
+
+      if (modalProfiles.length === 0) {
+        list.innerHTML = `
+          <div class="py-8 text-center space-y-2">
+            <div class="text-3xl">📂</div>
+            <div class="text-xs text-slate-400">ยังไม่มี Profile บอทในระบบ<br>ระบุจำนวน Worker ที่ต้องการแล้วกดปุ่ม '➕ สร้าง / อัปเดต Profiles' ด้านบน</div>
+          </div>
+        `;
+        return;
+      }
+
+      list.innerHTML = modalProfiles.map(p => `
+        <div class="rounded-lg px-3.5 py-2.5 flex items-center justify-between bg-[#161F36]/80 border border-[#25314E]/80 hover:bg-[#1C2846] transition-all">
+          <div class="flex items-center gap-3">
+            <div class="px-2.5 py-1 rounded bg-amber-500/15 border border-amber-500/30 text-amber-400 font-bold text-[11px]">
+              🤖 BOT #${p.id}
+            </div>
+            <div>
+              <div class="text-xs font-bold text-white">${escapeHtml(p.name)}</div>
+              <div class="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                <span>พร้อมทำงาน (Extension: hdjloiek...)</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <button onclick="sendAction('LAUNCH_SINGLE_PROFILE', { id: ${p.id} })" class="px-3 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-[11px] flex items-center gap-1 shadow-sm transition-all active:scale-[0.96]">
+              <span>🚀</span>
+              <span>เปิดทดสอบ</span>
+            </button>
+            <button onclick="sendAction('DELETE_SINGLE_PROFILE', { id: ${p.id} })" class="px-2.5 py-1.5 rounded-md bg-rose-950/50 hover:bg-rose-900 border border-rose-500/30 text-rose-300 hover:text-white font-semibold text-[11px] transition-all active:scale-[0.96]">
+              <span>🗑️</span>
+            </button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function changeModalProfileCount(delta) {
+      const inp = document.getElementById('modal-profile-count');
+      let val = parseInt(inp.value, 10) || 5;
+      val = Math.max(1, Math.min(20, val + delta));
+      inp.value = val;
+    }
+
+    function handleModalCreateProfiles() {
+      const val = parseInt(document.getElementById('modal-profile-count').value, 10) || 5;
+      const status = document.getElementById('modal-status-msg');
+      if (status) {
+        status.innerHTML = `<span>⏳ กำลังสร้าง Profiles (${val})...</span>`;
+        status.className = "text-[11px] text-amber-400 flex items-center gap-1.5 font-medium min-h-[16px]";
+      }
+      sendAction('CREATE_BOT_PROFILES', { count: val });
+      triggerToast(`➕ กำลังสร้างและติดตั้ง Extension ให้ ${val} Profiles`);
+      setTimeout(() => {
+        if (status) {
+          status.innerHTML = `<span>✅ สร้างและติดตั้ง Extension สำเร็จ (${val} Profiles)</span>`;
+          status.className = "text-[11px] text-emerald-400 flex items-center gap-1.5 font-medium min-h-[16px]";
+        }
+      }, 1000);
+    }
+
+    function handleModalDeleteAllProfiles() {
+      if (confirm('คุณต้องการลบ Profile Chrome ของบอททั้งหมดใช่หรือไม่?\n\n(การกระทำนี้จะไม่ส่งผลต่อ Google Chrome หลักของคุณ)')) {
+        sendAction('DELETE_ALL_PROFILES');
+        const status = document.getElementById('modal-status-msg');
+        if (status) {
+          status.innerHTML = `<span>🗑️ ล้าง Profile บอททั้งหมดเรียบร้อยแล้ว</span>`;
+          status.className = "text-[11px] text-rose-400 flex items-center gap-1.5 font-medium min-h-[16px]";
+        }
+        triggerToast('🗑️ ล้าง Profile บอททั้งหมดเรียบร้อย');
+      }
+    }
+
+    // ────────── Global Drag & Drop for Accounts File (.txt) ──────────
+    (function setupFileDragAndDrop() {
+      let dragCounter = 0;
+      const overlay = document.getElementById('file-drop-overlay');
+      const box = document.getElementById('file-drop-box');
+
+      ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(name => {
+        window.addEventListener(name, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }, false);
+      });
+
+      window.addEventListener('dragenter', (e) => {
+        if (e.dataTransfer && e.dataTransfer.types) {
+          const types = Array.from(e.dataTransfer.types);
+          if (types.includes('Files') || types.includes('application/x-moz-file')) {
+            dragCounter++;
+            if (overlay) {
+              overlay.classList.remove('hidden');
+              requestAnimationFrame(() => {
+                overlay.classList.remove('opacity-0');
+                if (box) box.classList.remove('scale-95');
+              });
+            }
+          }
+        }
+      });
+
+      window.addEventListener('dragleave', (e) => {
+        dragCounter--;
+        if (dragCounter <= 0) {
+          dragCounter = 0;
+          if (overlay) {
+            overlay.classList.add('opacity-0');
+            if (box) box.classList.add('scale-95');
+            setTimeout(() => {
+              if (dragCounter <= 0) overlay.classList.add('hidden');
+            }, 200);
+          }
+        }
+      });
+
+      window.addEventListener('drop', (e) => {
+        dragCounter = 0;
+        if (overlay) {
+          overlay.classList.add('opacity-0');
+          if (box) box.classList.add('scale-95');
+          setTimeout(() => overlay.classList.add('hidden'), 200);
+        }
+
+        const dt = e.dataTransfer;
+        if (dt && dt.files && dt.files.length > 0) {
+          let foundTxt = false;
+          for (let i = 0; i < dt.files.length; i++) {
+            const file = dt.files[i];
+            if (file.name.toLowerCase().endsWith('.txt')) {
+              foundTxt = true;
+              const reader = new FileReader();
+              reader.onload = function(evt) {
+                const text = evt.target.result;
+                if (window.chrome && window.chrome.webview) {
+                  window.chrome.webview.postMessage({
+                    type: 'IMPORT_ACCOUNTS_CONTENT',
+                    fileName: file.name,
+                    content: text
+                  });
+                }
+              };
+              reader.readAsText(file, 'UTF-8');
+              break;
+            }
+          }
+          if (!foundTxt) {
+            triggerToast('⚠️ กรุณาลากวางเฉพาะไฟล์นามสกุล .txt เท่านั้น');
+          }
+        }
+      });
+    })();
+
+    document.addEventListener('DOMContentLoaded', () => {
+      initDragSelectEngine();
+      ensureIpcAttached();
+      sendAction('APP_READY');
+    });
+
+    window.addEventListener('load', () => {
+      ensureIpcAttached();
+      sendAction('APP_READY');
+    });
+
+    // Safety watchdog: if HWID still says 'กำลังโหลด...' after load, poll until synced
+    let initCheckCount = 0;
+    const checkInitInterval = setInterval(() => {
+      initCheckCount++;
+      ensureIpcAttached();
+      const hwidEl = document.getElementById('hwid-val');
+      if (hwidEl && hwidEl.innerText.includes('กำลังโหลด')) {
+        sendAction('APP_READY');
+      } else {
+        clearInterval(checkInitInterval);
+      }
+      if (initCheckCount > 40) clearInterval(checkInitInterval);
+    }, 250);
+  </script>
+</body>
+</html>

@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['C:\\kong67\\ApibotWarZ\\FastLoginSuite_Login_Source\\server.py'],
+    ['server.py'],
     pathex=[],
     binaries=[],
-    datas=[('C:\\kong67\\ApibotWarZ\\FastLoginSuite_Login_Source\\extension', 'extension')],
+    datas=[('c:\\kong67\\ApibotWarZ\\FastLoginSuite_Login_Source\\extension', 'extension')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

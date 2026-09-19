@@ -504,10 +504,11 @@ func main() {
 }
 
 var labeledRegex = regexp.MustCompile(`(?i)ID\s*:\s*(\S+)\s*\|\s*PASS\s*:\s*(\S+)`)
+var rescueRegex = regexp.MustCompile(`([a-zA-Z0-9_.\-]+)[|:,\t]([a-zA-Z0-9_.\-]+)$`)
 
 func parseAccountLine(line string) (string, string) {
 	line = strings.TrimSpace(line)
-	if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
+	if line == "" {
 		return "", ""
 	}
 
@@ -515,6 +516,19 @@ func parseAccountLine(line string) (string, string) {
 	matches := labeledRegex.FindStringSubmatch(line)
 	if len(matches) == 3 {
 		return strings.TrimSpace(matches[1]), strings.TrimSpace(matches[2])
+	}
+
+	// 2. Rescue accounts pasted on comment lines (# or //)
+	if strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
+		rescueMatches := rescueRegex.FindStringSubmatch(line)
+		if len(rescueMatches) == 3 {
+			u := strings.TrimSpace(rescueMatches[1])
+			p := strings.TrimSpace(rescueMatches[2])
+			if !strings.EqualFold(u, "myaccount01") && !strings.EqualFold(u, "myaccount02") {
+				return u, p
+			}
+		}
+		return "", ""
 	}
 
 	// 2. Delimited format: |, :, ,, \t
@@ -743,7 +757,8 @@ func runBatchEngine() {
 				closeBatchOnServer()
 			}
 		}
-
-		fmt.Printf("\n🎉 ดำเนินการเข้าสู่ระบบเสร็จสิ้นครบทุกบัญชีแล้ว!\n")
 	}
+
+	fmt.Printf("\n🎉 ดำเนินการเข้าสู่ระบบเสร็จสิ้นครบทุกบัญชีแล้ว!\n")
+	fmt.Println("[ALL_COMPLETED] 🎉 ดำเนินการเสร็จสิ้นครบทุกบัญชีแล้ว!")
 }

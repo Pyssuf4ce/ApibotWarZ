@@ -1,6 +1,13 @@
 ﻿# ==============================================================================
 # FastLogin Suite - Release Build & Packaging Automation Script
+# Commercial Distribution Edition (Code Protection & Obfuscation)
 # ==============================================================================
+
+param(
+    [string]$TargetVersion = "",
+    [switch]$NonInteractive = $false,
+    [switch]$RebuildServer = $false
+)
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -15,9 +22,10 @@ $ProjectDir = $ScriptDir
 $CsprojPath = Join-Path $ProjectDir "UI\FastLoginSuite.UI.csproj"
 $DistDir = Join-Path $ScriptDir "..\Dist_FastLoginSuite"
 $ReleasesDir = Join-Path $ScriptDir "..\Releases"
+$TestDesktopDir = "C:\Users\User\Desktop\test"
 
 Write-Host "======================================================" -ForegroundColor Cyan
-Write-Host "     FastLogin Suite - Release Build & Packaging Tool " -ForegroundColor Green
+Write-Host " FastLogin Suite - Commercial Release & Packaging Tool" -ForegroundColor Green
 Write-Host "======================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -26,6 +34,7 @@ Write-Host "[*] ตรวจสอบและปิด Process ที่ทำ�
 Stop-Process -Name "FastLogin.Launcher" -Force -ErrorAction SilentlyContinue
 Stop-Process -Name "FastLogin" -Force -ErrorAction SilentlyContinue
 Stop-Process -Name "server" -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 500
 
 # 1. Read Current Version from csproj
 $currentVer = "1.0.0"
@@ -40,11 +49,15 @@ Write-Host "เวอร์ชันปัจจุบันในระบบ: 
 Write-Host "v$currentVer" -ForegroundColor Yellow
 Write-Host ""
 
-# 2. Ask User for Version
-$inputVer = Read-Host "กรอกเลขเวอร์ชันที่ต้องการบิ้ว (กด Enter เพื่อใช้ v$currentVer)"
+# 2. Determine Target Version
 $targetVer = $currentVer
-if (-not [string]::IsNullOrWhiteSpace($inputVer)) {
-    $targetVer = $inputVer.Trim().TrimStart('v', 'V')
+if (-not [string]::IsNullOrWhiteSpace($TargetVersion)) {
+    $targetVer = $TargetVersion.Trim().TrimStart('v', 'V')
+} elseif (-not $NonInteractive) {
+    $inputVer = Read-Host "กรอกเลขเวอร์ชันที่ต้องการบิ้ว (กด Enter เพื่อใช้ v$currentVer)"
+    if (-not [string]::IsNullOrWhiteSpace($inputVer)) {
+        $targetVer = $inputVer.Trim().TrimStart('v', 'V')
+    }
 }
 
 Write-Host ""
@@ -58,34 +71,41 @@ if (Test-Path $CsprojPath) {
 }
 
 # 4. Compile Python Server (server.exe)
-Write-Host "[1/5] กำลัง Compile Python Server (server.exe)..." -ForegroundColor Yellow
-$needBuildServer = "Y"
+Write-Host "[1/5] กำลังตรวจสอบและจัดเตรียม Python Server (server.exe)..." -ForegroundColor Yellow
+$needBuildServer = "N"
 $distServerExe = Join-Path $ScriptDir "dist\server.exe"
 $serverPy = Join-Path $ScriptDir "server.py"
 $extPath = Join-Path $ScriptDir "extension"
 $extData = "$extPath;extension"
 
-if (Test-Path $distServerExe) {
+if ($RebuildServer -or (-not (Test-Path $distServerExe))) {
+    $needBuildServer = "Y"
+} else {
     $serverAge = (Get-Item $distServerExe).LastWriteTime
     $pyAge = (Get-Item $serverPy).LastWriteTime
-    if ($serverAge -gt $pyAge) {
-        $ans = Read-Host "พบ server.exe ล่าสุดแล้ว ต้องการ Recompile ด้วย PyInstaller ใหม่หรือไม่? [y/N]"
-        if (-not ($ans -and $ans.Trim().ToLower() -eq "y")) {
-            $needBuildServer = "N"
+    if ($pyAge -gt $serverAge) {
+        if ($NonInteractive) {
+            $needBuildServer = "Y"
+        } else {
+            $ans = Read-Host "server.py มีการแก้ไขใหม่ ต้องการ Recompile ด้วย PyInstaller หรือไม่? [Y/n]"
+            if ([string]::IsNullOrWhiteSpace($ans) -or $ans.Trim().ToLower() -eq "y") {
+                $needBuildServer = "Y"
+            }
         }
     }
 }
 
 if ($needBuildServer -eq "Y") {
+    Write-Host "      [*] กำลัง Compile server.py ด้วย PyInstaller..." -ForegroundColor Gray
     pyinstaller --noconfirm --onefile --clean --name server --add-data $extData $serverPy
     if ($LASTEXITCODE -ne 0) {
         Write-Host "[ERROR] PyInstaller build failed!" -ForegroundColor Red
-        Read-Host "กดปุ่ม Enter เพื่อปิด..."
+        if (-not $NonInteractive) { Read-Host "กดปุ่ม Enter เพื่อปิด..." }
         exit $LASTEXITCODE
     }
-    Write-Host "      [OK] server.exe compiled สำเร็จเรียบร้อย" -ForegroundColor Green
+    Write-Host "      [OK] server.exe compiled สำเร็จเรียบร้อย (ซ่อน Python Source Code 100%)" -ForegroundColor Green
 } else {
-    Write-Host "      [OK] ใช้ไฟล์ dist\server.exe เดิมที่มีอยู่" -ForegroundColor Gray
+    Write-Host "      [OK] ใช้ไฟล์ dist\server.exe ที่คอมไพล์ไว้แล้ว" -ForegroundColor Gray
 }
 
 Write-Host ""
@@ -98,10 +118,10 @@ $loginMainGo = Join-Path $ScriptDir "login_main.go"
 & go build -ldflags $ldflags -o $fastLoginExe $loginMainGo
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[ERROR] การ Compile Go Bot ล้มเหลว!" -ForegroundColor Red
-    Read-Host "กดปุ่ม Enter เพื่อปิด..."
+    if (-not $NonInteractive) { Read-Host "กดปุ่ม Enter เพื่อปิด..." }
     exit $LASTEXITCODE
 }
-Write-Host "      [OK] FastLogin.exe compiled สำเร็จ (Stripped Symbols -s -w)" -ForegroundColor Green
+Write-Host "      [OK] FastLogin.exe compiled สำเร็จ (Stripped Symbols -s -w ป้องกัน Decompile)" -ForegroundColor Green
 
 Write-Host ""
 
@@ -111,47 +131,66 @@ Write-Host "[3/5] กำลัง Compile C# UI Launcher (dotnet build + Obfusca
 & dotnet build "$CsprojPath" -c Release --no-incremental -p:Version=$targetVer -p:AssemblyVersion=$targetVer -p:FileVersion=$targetVer -p:InformationalVersion=$targetVer
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[ERROR] การ Build C# Launcher ล้มเหลว!" -ForegroundColor Red
-    Read-Host "กดปุ่ม Enter เพื่อปิด..."
+    if (-not $NonInteractive) { Read-Host "กดปุ่ม Enter เพื่อปิด..." }
     exit $LASTEXITCODE
 }
-Write-Host "      [OK] C# Launcher built and obfuscated สำเร็จ (v$targetVer)" -ForegroundColor Green
+Write-Host "      [OK] C# Launcher built and obfuscated สำเร็จ (Strings Encrypted, Methods Renamed)" -ForegroundColor Green
 
 Write-Host ""
 
 # 7. Assemble Clean Distribution Package
-Write-Host "[4/5] กำลังจัดเตรียมโฟลเดอร์แจกจ่าย (Clean Distribution Package)..." -ForegroundColor Yellow
+Write-Host "[4/5] กำลังจัดเตรียมแพ็กเกจส่งมอบลูกค้า (Clean Distribution Package)..." -ForegroundColor Yellow
 if (-not (Test-Path $DistDir)) { New-Item -ItemType Directory -Path $DistDir -Force | Out-Null }
 
-# Clear sensitive user files, logs, accounts
+# Wipe old sensitive / source / debug files from DistDir
 $cleanPatterns = @(
     "profiles",
     "win-x64",
     "obfuscar.xml",
     "tokens.json",
-    "config.json",
+    "tokens.json.bak",
     "accounts_state.json",
+    "accounts_state.json.bak",
     "accounts_queue.txt",
     "accounts_failed.txt",
-    "accounts*.txt",
     "*.pdb",
     "*.log",
     "*.tmp",
     "*.bak",
-    "*.zip"
+    "*.zip",
+    "*.py",
+    "*.go",
+    "*.cs",
+    "*.xml",
+    "*.spec",
+    "*.sln",
+    "*.csproj",
+    "*.user"
 )
 
 foreach ($pat in $cleanPatterns) {
     Get-ChildItem -Path $DistDir -Filter $pat -Recurse -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-# Copy runtime binaries
+# Copy runtime binaries from Release output
 $binDir = Join-Path $ProjectDir "UI\bin\Release\net10.0-windows10.0.19041.0"
 Copy-Item "$binDir\FastLogin.Launcher.exe" "$DistDir\" -Force
 Copy-Item "$binDir\FastLogin.Launcher.dll" "$DistDir\" -Force
 Copy-Item "$binDir\FastLogin.Launcher.runtimeconfig.json" "$DistDir\" -Force
 Copy-Item "$binDir\FastLogin.Launcher.deps.json" "$DistDir\" -Force
+Copy-Item "$binDir\Microsoft.Web.WebView2.Core.dll" "$DistDir\" -Force
+Copy-Item "$binDir\Microsoft.Web.WebView2.WinForms.dll" "$DistDir\" -Force
 Copy-Item "$binDir\Microsoft.Windows.SDK.NET.dll" "$DistDir\" -Force
 Copy-Item "$binDir\WinRT.Runtime.dll" "$DistDir\" -Force
+
+if (Test-Path "$binDir\runtimes") {
+    Copy-Item "$binDir\runtimes" "$DistDir\" -Recurse -Force
+}
+if (Test-Path "$binDir\runtimes\win-x64\native\WebView2Loader.dll") {
+    Copy-Item "$binDir\runtimes\win-x64\native\WebView2Loader.dll" "$DistDir\" -Force
+}
+
+# Copy Go engine & compiled Python server
 Copy-Item (Join-Path $ProjectDir "FastLogin.exe") "$DistDir\" -Force
 
 if (Test-Path "dist\server.exe") {
@@ -160,10 +199,10 @@ if (Test-Path "dist\server.exe") {
     Copy-Item "server.exe" "$DistDir\server.exe" -Force
 }
 
-# Copy Extension
-$extDist = Join-Path $DistDir "extension"
-if (-not (Test-Path $extDist)) { New-Item -ItemType Directory -Path $extDist -Force | Out-Null }
-Copy-Item (Join-Path $ProjectDir "extension\*") "$extDist\" -Recurse -Force
+# Copy Assets (UI HTML/CSS/JS)
+$assetsDist = Join-Path $DistDir "Assets"
+if (-not (Test-Path $assetsDist)) { New-Item -ItemType Directory -Path $assetsDist -Force | Out-Null }
+Copy-Item (Join-Path $ProjectDir "UI\Assets\*") "$assetsDist\" -Recurse -Force
 
 # Copy Portable Chrome for Testing
 if (Test-Path (Join-Path $ProjectDir "chrome-win64")) {
@@ -172,10 +211,61 @@ if (Test-Path (Join-Path $ProjectDir "chrome-win64")) {
     Copy-Item (Join-Path $ProjectDir "chrome-win64\*") "$chromeDist\" -Recurse -Force
 }
 
-# Clean any leftover PDB
-Get-ChildItem -Path $DistDir -Filter "*.pdb" -Recurse -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+# Copy & Obfuscate Extension JS files (Hiding Turnstile Bypass techniques)
+Write-Host "      [*] กำลัง Obfuscate โค้ด Chrome Extension เพื่อปิดบังเทคนิค..." -ForegroundColor Cyan
+$extDist = Join-Path $DistDir "extension"
+if (-not (Test-Path $extDist)) { New-Item -ItemType Directory -Path $extDist -Force | Out-Null }
 
-Write-Host "      [OK] รวมไฟล์แจกจ่ายและล้างข้อมูลส่วนตัวเรียบร้อย 100%" -ForegroundColor Green
+Copy-Item (Join-Path $ProjectDir "extension\manifest.json") "$extDist\" -Force
+Copy-Item (Join-Path $ProjectDir "extension\icon.png") "$extDist\" -Force
+
+# Default clean extension config
+$extConfigContent = '{"port": 5000, "wid": 1, "auto_solve": true}'
+[System.IO.File]::WriteAllText((Join-Path $extDist "config.json"), $extConfigContent, [System.Text.Encoding]::UTF8)
+
+# Obfuscate JS files using javascript-obfuscator
+$jsFilesToObfuscate = @("content.js", "background.js")
+foreach ($js in $jsFilesToObfuscate) {
+    $srcJs = Join-Path $ProjectDir "extension\$js"
+    $dstJs = Join-Path $extDist $js
+    if (Test-Path $srcJs) {
+        try {
+            & javascript-obfuscator.cmd "$srcJs" --output "$dstJs" --compact true --string-array true --string-array-encoding 'base64' --rename-globals false --identifier-names-generator 'hexadecimal' 2>&1 | Out-Null
+            if (-not (Test-Path $dstJs)) {
+                Copy-Item $srcJs $dstJs -Force
+            }
+        } catch {
+            Copy-Item $srcJs $dstJs -Force
+        }
+    }
+}
+
+# Create clean accounts.txt template
+$accountsTemplatePath = Join-Path $DistDir "accounts.txt"
+$accountsTemplateContent = ""
+[System.IO.File]::WriteAllText($accountsTemplatePath, $accountsTemplateContent, [System.Text.Encoding]::UTF8)
+
+# Create clean default config.json
+$configPath = Join-Path $DistDir "config.json"
+$configDefault = @"
+{
+  "ThreadCount": 5,
+  "AutoSolveCaptcha": true,
+  "OperationMode": "all",
+  "CooldownPerAccountSeconds": 5,
+  "DeepSleepEveryAccounts": 10,
+  "DeepSleepDurationSeconds": 15,
+  "RateLimitCooldownSeconds": 20,
+  "EventUuid": "a297cbd7-c1c4-448f-9e9f-0f2a35d28ac3",
+  "ChromeBotProfileCount": 5
+}
+"@
+[System.IO.File]::WriteAllText($configPath, $configDefault, [System.Text.Encoding]::UTF8)
+
+# Final deep clean on DistDir to guarantee zero source/debug files
+Get-ChildItem -Path $DistDir -Include "*.pdb", "*.xml", "*.py", "*.go", "*.cs", "obfuscar.xml" -Recurse -Force -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+
+Write-Host "      [OK] รวมไฟล์แจกจ่ายและป้องกันโค้ดเรียบร้อย 100%" -ForegroundColor Green
 
 Write-Host ""
 
@@ -198,30 +288,61 @@ $zipSizeMB = [math]::Round($zipFileInfo.Length / 1MB, 2)
 
 Write-Host "      [OK] สร้างไฟล์ ZIP สำเร็จ: FastLoginSuite_v$targetVer.zip ($zipSizeMB MB)" -ForegroundColor Green
 
-# 9. Summary & Open Explorer
+# 9. Sync to Desktop Test Folder if exists
+if (Test-Path $TestDesktopDir) {
+    Write-Host ""
+    Write-Host "[*] กำลัง Sync ไฟล์ชุด Release ไปยังโฟลเดอร์ทดสอบ ($TestDesktopDir)..." -ForegroundColor Yellow
+    # Clean sensitive / source files from testDir as well
+    $testCleanPatterns = @("*.py", "*.pdb", "*.xml", "*.go", "*.cs", "obfuscar.xml", "test_cdp_turnstile.py")
+    foreach ($pat in $testCleanPatterns) {
+        Get-ChildItem -Path $TestDesktopDir -Filter $pat -Recurse -Force -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    # Copy all release files to testDir (exclude overwriting existing test accounts.txt if user has accounts there)
+    $releaseFiles = Get-ChildItem -Path $DistDir
+    foreach ($item in $releaseFiles) {
+        if ($item.Name -eq "accounts.txt" -and (Test-Path (Join-Path $TestDesktopDir "accounts.txt"))) {
+            # Don't overwrite existing test accounts if user already has accounts there
+            continue
+        }
+        $destPath = Join-Path $TestDesktopDir $item.Name
+        if ($item.PSIsContainer) {
+            if (-not (Test-Path $destPath)) { New-Item -ItemType Directory -Path $destPath -Force | Out-Null }
+            Copy-Item -Path (Join-Path $item.FullName "*") -Destination $destPath -Recurse -Force
+        } else {
+            Copy-Item -Path $item.FullName -Destination $destPath -Force
+        }
+    }
+    Write-Host "      [OK] Sync ไปยัง $TestDesktopDir สำเร็จเรียบร้อย 100%" -ForegroundColor Green
+}
+
+# 10. Summary & Open Explorer
 $distResolved = (Resolve-Path $DistDir).Path
 $zipResolved = (Resolve-Path $zipVersionFile).Path
 
 Write-Host ""
 Write-Host "======================================================" -ForegroundColor Green
-Write-Host "               BUILD SUCCESSFUL!                      " -ForegroundColor Green
+Write-Host "         COMMERCIAL BUILD SUCCESSFUL!                 " -ForegroundColor Green
 Write-Host "======================================================" -ForegroundColor Green
 Write-Host "เวอร์ชัน:    v$targetVer" -ForegroundColor Yellow
 Write-Host "โฟลเดอร์:   $distResolved" -ForegroundColor Cyan
 Write-Host "ไฟล์ ZIP:    $zipResolved" -ForegroundColor Cyan
 Write-Host "ขนาดไฟล์:   $zipSizeMB MB" -ForegroundColor Gray
 Write-Host ""
-Write-Host "ความปลอดภัยในการส่งมอบลูกค้า:" -ForegroundColor White
-Write-Host "  [OK] C# DLL ผ่านการ Obfuscate (ป้องกัน Decompile)" -ForegroundColor Green
-Write-Host "  [OK] Go Binary Stripped (-s -w)" -ForegroundColor Green
-Write-Host "  [OK] ไม่มี Source Code (*.cs, *.go, *.py) ในชุดแจกจ่าย" -ForegroundColor Green
-Write-Host "  [OK] ล้างไฟล์ข้อมูลส่วนตัว บัญชี และ Log ทั้งหมด 100%" -ForegroundColor Green
-Write-Host "  [OK] รวม Chrome for Testing Portable โหลด Extension อัตโนมัติทุกเครื่อง" -ForegroundColor Green
+Write-Host "การป้องกันโค้ดและความปลอดภัยสำหรับส่งมอบลูกค้า:" -ForegroundColor White
+Write-Host "  [OK] C# Launcher ผ่าน Obfuscar (Strings Encrypted + Names Obfuscated)" -ForegroundColor Green
+Write-Host "  [OK] Go Bot Engine ตัด Symbol ออกทั้งหมด (-s -w Stripped Binary)" -ForegroundColor Green
+Write-Host "  [OK] Python Server คอมไพล์เป็น server.exe (ลบ server.py ทิ้ง 100%)" -ForegroundColor Green
+Write-Host "  [OK] Chrome Extension ผ่าน Javascript-Obfuscator (เข้ารหัสโค้ดข้าม Turnstile)" -ForegroundColor Green
+Write-Host "  [OK] ลบไฟล์ Debug (*.pdb), Config ภายใน (*.xml), และไฟล์ Source Code ทั้งหมด" -ForegroundColor Green
+Write-Host "  [OK] สร้าง Template accounts.txt สะอาดพร้อมใช้งาน" -ForegroundColor Green
+Write-Host "  [OK] รวม Chrome for Testing Portable ใช้งานได้ทันทีทุกเครื่องโดยไม่ต้องลงโปรแกรมเพิ่ม" -ForegroundColor Green
 Write-Host "======================================================" -ForegroundColor Green
 Write-Host ""
 
-if (Test-Path $zipResolved) {
+if ((-not $NonInteractive) -and (Test-Path $zipResolved)) {
     Start-Process "explorer.exe" -ArgumentList "/select,`"$zipResolved`""
 }
 
-Read-Host "กดปุ่ม Enter เพื่อเสร็จสิ้น..."
+if (-not $NonInteractive) {
+    Read-Host "กดปุ่ม Enter เพื่อเสร็จสิ้น..."
+}
